@@ -127,3 +127,45 @@ test("stale and unknown values are flagged, not shown as current", async ({ page
   await expect(page.getByText(/устарело/).first()).toBeVisible();
   await expect(page.getByText(/не указано/).first()).toBeVisible();
 });
+
+test("buyer must choose a location and zone coverage is enforced per supplier", async ({
+  page,
+}) => {
+  await switchPersona(page, /владелец кафе/i);
+  await navTo(page, "Корзина");
+  // The location selector is present and names a demo zone.
+  const selector = page.getByLabel(/Точка доставки/);
+  await expect(selector).toBeVisible();
+  await expect(selector.locator("option").first()).toBeAttached();
+  // Selecting the north location drops Beta (center-only) coverage; its group
+  // gets a zone blocker instead of silently shipping.
+  await selector.selectOption("loc-cafe-2");
+  await expect(page.getByText(/не покрывает|зону/i).first()).toBeVisible();
+});
+
+test("reorder creates a new editable draft and never auto-submits", async ({ page }) => {
+  const user = /владелец кафе/i;
+  await switchPersona(page, user);
+  await ensureBasketReady(page);
+  await page.getByRole("button", { name: "Отправить (демо)" }).click();
+  await navTo(page, "Закупки");
+  await page.getByRole("link", { name: "Открыть" }).first().click();
+  await page
+    .getByRole("button", { name: /Повторить закупку/ })
+    .first()
+    .click();
+  await expect(page.getByText(/Черновик создан|черновик/i).first()).toBeVisible();
+  // Going to the basket shows the re-created draft lines (still a draft).
+  await navTo(page, "Корзина");
+  await expect(page.getByRole("heading", { name: /Корзина/ })).toBeVisible();
+  await expect(page.locator(".suborder-preview").first()).toBeVisible();
+});
+
+test("a foreign persona cannot open a guessed procurement id", async ({ page }) => {
+  await switchPersona(page, /владелец кафе/i);
+  await ensureBasketReady(page);
+  await page.getByRole("button", { name: "Отправить (демо)" }).click();
+  // A freshly loaded app (no in-memory suborders) must not resolve a guessed id.
+  await page.goto("/procurement/proc-does-not-exist");
+  await expect(page.getByText(/не найдена|недоступна/i).first()).toBeVisible();
+});

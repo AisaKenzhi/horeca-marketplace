@@ -19,6 +19,12 @@ import {
   type Money,
 } from "./money";
 import { checkOrderQuantity, type QuantityProblem } from "./packaging";
+import {
+  DEFAULT_FRESHNESS_CONFIG,
+  evaluateFreshness,
+  type Freshness,
+  type FreshnessConfig,
+} from "./freshness";
 
 export interface ComputedLine {
   readonly line: BasketLine;
@@ -27,6 +33,10 @@ export interface ComputedLine {
   readonly subtotal: Money;
   /** Set when the live price is unavailable or the offer is archived. */
   readonly problem: LineProblem | null;
+  /** Freshness of the live price observation (for badge + confirmation logic). */
+  readonly priceFreshness: Freshness;
+  /** True when the line's live price differs from the snapshot captured on add. */
+  readonly priceChangedSinceAdded: boolean;
 }
 
 export type LineProblem =
@@ -47,6 +57,12 @@ export interface KnownDelivery {
   readonly freeBecauseThresholdMet: boolean;
 }
 
+/** Whether a supplier's declared zones cover the selected buyer location. */
+export type ZoneCoverage =
+  | { readonly state: "covered" }
+  | { readonly state: "not_covered"; readonly zone: string }
+  | { readonly state: "unknown"; readonly zone: string | null };
+
 export interface SuborderGroup {
   readonly supplierId: SupplierProfile["id"];
   readonly supplier: SupplierProfile;
@@ -60,9 +76,17 @@ export interface SuborderGroup {
   /** Total = subtotal + known delivery. When delivery is unknown we keep it separate. */
   readonly total: Money;
   readonly hasUnknownDelivery: boolean;
-  /** True only when every line is valid and the supplier minimum is met. */
+  /** Whether the supplier covers the selected delivery zone. */
+  readonly zoneCoverage: ZoneCoverage;
+  /**
+   * True only when every line is valid, the supplier minimum is met, and the
+   * supplier covers the location zone. Stale prices are NOT silently accepted:
+   * they are surfaced as blockers so the buyer must re-confirm.
+   */
   readonly readyToSubmit: boolean;
   readonly blockers: readonly string[];
+  /** Lines whose live price is stale or changed since the snapshot. */
+  readonly needsPriceConfirmation: boolean;
 }
 
 export interface CartComputation {
@@ -81,13 +105,33 @@ function priceOf(offer: SupplierOffer): Money | null {
   return offer.pricePerSellUnit.value;
 }
 
-export function computeLine(line: BasketLine, offer: SupplierOffer): ComputedLine {
+export function computeLine(
+  line: BasketLine,
+  offer: SupplierOffer,
+  nowIso: string,
+  config: FreshnessConfig = DEFAULT_FRESHNESS_CONFIG,
+): ComputedLine {
+  const priceFreshness = evaluateFreshness(offer.pricePerSellUnit, nowIso, config);
   if (offer.archived) {
-    return { line, offer, subtotal: zero(), problem: { kind: "archived" } };
+    return {
+      line,
+      offer,
+      subtotal: zero(),
+      problem: { kind: "archived" },
+      priceFreshness,
+      priceChangedSinceAdded: false,
+    };
   }
   const price = priceOf(offer);
   if (price === null) {
-    return { line, offer, subtotal: zero(), problem: { kind: "price_unknown" } };
+    return {
+      line,
+      offer,
+      subtotal: zero(),
+      problem: { kind: "price_unknown" },
+      priceFreshness,
+      priceChangedSinceAdded: false,
+    };
   }
   const qtyCheck = checkOrderQuantity(line.quantity, offer.packaging);
   if (!qtyCheck.ok) {
@@ -96,16 +140,72 @@ export function computeLine(line: BasketLine, offer: SupplierOffer): ComputedLin
       offer,
       subtotal: zero(),
       problem: { kind: "quantity", reason: qtyCheck.reason, message: qtyCheck.message },
+      priceFreshness,
+      priceChangedSinceAdded: false,
     };
   }
-  return { line, offer, subtotal: multiplyMoney(price, line.quantity), problem: null };
+  const priceChangedSinceAdded =
+    line.addedAtPriceSnapshot !== null &&
+    (line.addedAtPriceSnapshot.amount !== price.amount ||
+      line.addedAtPriceSnapshot.currency !== price.currency);
+  // A stale price is NOT silently usable: it becomes a blocker so the buyer
+  // must explicitly re-confirm the current terms before submitting.
+  if (priceFreshness.state !== "fresh") {
+    return {
+      line,
+      offer,
+      subtotal: multiplyMoney(price, line.quantity),
+      problem: { kind: "price_stale", lastKnown: price },
+      priceFreshness,
+      priceChangedSinceAdded,
+    };
+  }
+  return {
+    line,
+    offer,
+    subtotal: multiplyMoney(price, line.quantity),
+    problem: null,
+    priceFreshness,
+    priceChangedSinceAdded,
+  };
+}
+
+/**
+ * Zone coverage: a supplier covers a location when its declared zones include
+ * the location's zone. An unknown/empty zone is reported as unknown, never as
+ * "delivery available".
+ */
+export function zoneCoverage(
+  supplier: SupplierProfile,
+  zone: string | null | undefined,
+): ZoneCoverage {
+  if (zone === null || zone === undefined || zone.length === 0) {
+    return { state: "unknown", zone: null };
+  }
+  if (supplier.deliveryZones.length === 0) {
+    return { state: "unknown", zone };
+  }
+  if (supplier.deliveryZones.includes(zone)) {
+    return { state: "covered" };
+  }
+  return { state: "not_covered", zone };
 }
 
 export function computeSuborderGroup(
   supplier: SupplierProfile,
   lines: readonly { line: BasketLine; offer: SupplierOffer }[],
+  options: {
+    readonly nowIso?: string;
+    readonly config?: FreshnessConfig;
+    /** The buyer location's delivery zone, when one is selected. */
+    readonly locationZone?: string | null;
+  } = {},
 ): SuborderGroup {
-  const computed = lines.map(({ line, offer }) => computeLine(line, offer));
+  const nowIso = options.nowIso ?? "1970-01-01T00:00:00.000Z";
+  const config = options.config ?? DEFAULT_FRESHNESS_CONFIG;
+  const computed = lines.map(({ line, offer }) =>
+    computeLine(line, offer, nowIso, config),
+  );
   const subtotal = sumMoney(computed.map((c) => c.subtotal));
 
   const minimumMet =
@@ -133,16 +233,39 @@ export function computeSuborderGroup(
     };
   }
 
+  const coverage = zoneCoverage(supplier, options.locationZone ?? null);
+
   const blockers: string[] = [];
+  let needsPriceConfirmation = false;
   for (const c of computed) {
     if (c.problem?.kind === "quantity") blockers.push(c.problem.message);
     if (c.problem?.kind === "archived") blockers.push("Позиция больше не продаётся.");
     if (c.problem?.kind === "price_unknown") blockers.push("Цена не указана.");
+    if (c.problem?.kind === "price_stale") {
+      blockers.push(
+        `Цена устарела и требует подтверждения: последняя известная ${formatMoney(
+          c.problem.lastKnown,
+        )}.`,
+      );
+      needsPriceConfirmation = true;
+    }
+    if (c.priceChangedSinceAdded) {
+      blockers.push(
+        "Цена изменилась с момента добавления — подтвердите актуальную цену.",
+      );
+      needsPriceConfirmation = true;
+    }
   }
   if (!minimumMet) {
     blockers.push(
       `Не достигнут минимум поставщика: не хватает ${formatMoney(amountToMinimum)}.`,
     );
+  }
+  if (coverage.state === "not_covered") {
+    blockers.push(`Поставщик не доставляет в выбранную зону (${coverage.zone}).`);
+  }
+  if (coverage.state === "unknown") {
+    blockers.push("Зона доставки не подтверждена поставщиком — нужно уточнить.");
   }
 
   const total = delivery.known
@@ -163,8 +286,10 @@ export function computeSuborderGroup(
     delivery,
     total,
     hasUnknownDelivery: !delivery.known,
+    zoneCoverage: coverage,
     readyToSubmit: blockers.length === 0,
     blockers,
+    needsPriceConfirmation,
   };
 }
 
@@ -172,6 +297,11 @@ export function computeCart(
   basket: Basket,
   offersById: ReadonlyMap<string, SupplierOffer>,
   suppliersById: ReadonlyMap<string, SupplierProfile>,
+  options: {
+    readonly nowIso?: string;
+    readonly config?: FreshnessConfig;
+    readonly locationZone?: string | null;
+  } = {},
 ): CartComputation {
   const bySupplier = new Map<
     string,
@@ -191,7 +321,7 @@ export function computeCart(
   }
 
   const groups = [...bySupplier.values()].map((g) =>
-    computeSuborderGroup(g.supplier, g.lines),
+    computeSuborderGroup(g.supplier, g.lines, options),
   );
 
   const grandSubtotal = sumMoney(groups.map((g) => g.subtotal));

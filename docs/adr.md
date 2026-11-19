@@ -124,3 +124,66 @@ to Russian.
 
 - Adding a locale is a data change, not a code change.
 - Terminology and translations still need review before launch.
+
+## ADR-0008 — Parent procurement entity and independent suborders
+
+**Status:** Accepted for P0 hardening.
+
+**Context.** The original P0 stored a `procurementId` on each suborder but never
+persisted a parent record, so a buyer could not see which independent supplier
+suborders belonged to one submit action, and partial states could not be
+aggregated honestly.
+
+**Decision.** Add a persisted `ParentProcurement` (`RepositoryState.parents`).
+`submitBasket` creates the parent and its ready suborders in a single commit.
+The parent status is a derived roll-up (confirmed only when every branch is
+confirmed, `partially_confirmed` when some are, never hiding a branch). A
+readiness preview (`submitPreview`) returns which supplier groups would submit
+and which stay in the basket with an exact reason.
+
+**Consequences.**
+
+- One submit action can no longer create orphan suborders without a parent.
+- Repeated submit with the same idempotency key replays the prior result.
+- A real backend must model the same parent/child relationship with a foreign
+  key and a transaction.
+
+## ADR-0009 — Typed error catalogue and idempotency/versioning
+
+**Status:** Accepted for P0 hardening.
+
+**Context.** Prototype failures previously threw plain `Error` with English
+messages and no stable code, and side-effecting operations could be repeated by a
+double click or an unclear timeout.
+
+**Decision.** Introduce `src/domain/errors.ts` with a stable `ErrorCode` set and
+an `AppError` whose `message` is safe to render. Side-effecting repository
+operations accept an idempotency key; concurrency-sensitive writes accept an
+`expectedVersion` and reject with a `conflict` instead of overwriting. Only
+transient codes are retryable, and only for idempotent operations.
+
+**Consequences.**
+
+- The UI can branch on a code and show a safe reason plus the next step.
+- A retried submit/import/reorder does not double-create.
+- A stale write surfaces a re-read request rather than silently winning.
+
+## ADR-0010 — Atomic local CSV import with diff preview
+
+**Status:** Accepted for P0 hardening.
+
+**Context.** The import path could parse and preview a CSV but applying it only
+wrote a job log with no product/offer data, no existing-SKU dedup and no atomic
+strategy.
+
+**Decision.** `resolveImportRows` enriches parsed rows with an added/updated/
+unchanged/error status and a before/after diff against existing offers.
+`Repository.applyCatalogImport` writes products/offers atomically, upserts by
+supplier SKU (no duplicates on re-import), and refuses the whole apply if any row
+has an error. XLSX, ERP/1C and live sync remain out of scope.
+
+**Consequences.**
+
+- Re-importing the same file changes nothing and creates no duplicates.
+- A single bad row cannot partially corrupt a valid apply.
+- The file is treated as plain text; no formulas, macros or HTML are executed.

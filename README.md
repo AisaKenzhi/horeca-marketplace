@@ -40,8 +40,10 @@ Docker is defined for a reproducible local dev environment only.
 2. **Корзина** — the basket is split per supplier, each with its own subtotal,
    supplier minimum, delivery rule and status. One total is never shown as one
    bill. Where delivery is unknown it is shown as unknown, not as zero.
-3. **Отправить (демо)** — creates a parent procurement and one suborder per ready
-   supplier. Groups below their minimum stay in the basket.
+3. **Отправить (демо)** — pick a deliver-to location first, then create a parent
+   procurement and one suborder per ready supplier. Groups below their minimum,
+   with a stale price, or in a zone the supplier does not cover stay in the basket
+   with an exact reason.
 4. Switch the demo role to a **supplier order operator** → **Кабинет поставщика**
    → **Предложить изменение** on a suborder.
 5. Switch back to the **buyer owner** → **Закупки** → open the suborder → it
@@ -59,18 +61,19 @@ hotel owner, two suppliers (Alpha/Beta), and platform moderator/support.
 
 ## Scripts
 
-| Command                 | What it does                                          |
-| ----------------------- | ----------------------------------------------------- |
-| `npm run dev`           | Vite dev server (127.0.0.1:5173)                      |
-| `npm run build`         | Type-check + production build to `dist/`              |
-| `npm run preview`       | Serve the built app (127.0.0.1:4173)                  |
-| `npm run typecheck`     | TypeScript project build (strict)                     |
-| `npm run lint`          | ESLint (flat config, type-aware)                      |
-| `npm run format`        | Prettier check                                        |
-| `npm test`              | Vitest unit + component tests                         |
-| `npm run test:coverage` | Coverage for `src/domain` and `src/data`              |
-| `npm run e2e`           | Playwright E2E (desktop + mobile) against the preview |
-| `npm run verify`        | lint → typecheck → test → build                       |
+| Command                 | What it does                                                     |
+| ----------------------- | ---------------------------------------------------------------- |
+| `npm run dev`           | Vite dev server (127.0.0.1:5173)                                 |
+| `npm run build`         | Type-check + production build to `dist/`                         |
+| `npm run preview`       | Serve the built app (127.0.0.1:4173)                             |
+| `npm run typecheck`     | TypeScript project build (strict)                                |
+| `npm run lint`          | ESLint (flat config, type-aware)                                 |
+| `npm run format`        | Prettier check                                                   |
+| `npm test`              | Vitest unit + component tests                                    |
+| `npm run test:coverage` | Coverage for `src/domain` and `src/data` (fails below the floor) |
+| `npm run e2e`           | Playwright E2E (desktop + mobile) against the preview            |
+| `npm run verify`        | lint → typecheck → test → build                                  |
+| `npm run verify:full`   | format → lint → typecheck → coverage → build                     |
 
 First E2E run may need a browser: `npm run e2e:install` (Chromium).
 
@@ -92,6 +95,26 @@ First E2E run may need a browser: `npm run e2e:install` (Chromium).
   revision**; silence is not consent.
 - Reorder creates a new draft that re-checks live price and availability.
 - Demo screens collect no money and are not a public storefront.
+
+## Hardening highlights (local, synthetic data only)
+
+- **Tenant isolation** on every read/write boundary: procurement detail,
+  decisions, receipts and parent reads are scoped to the acting buyer org or the
+  owning supplier. A guessed id yields a safe not-found/forbidden.
+- **Explicit deliver-to location** chosen from the acting org's locations, and
+  **per-supplier delivery-zone coverage** validated before submit. Unknown or
+  uncovered zones hold the group back rather than claiming delivery.
+- **Stale/changed price blocks submit** and requires explicit re-confirmation.
+- **Parent procurement** persisted; independent supplier suborders aggregate
+  partial states without hiding any branch.
+- **Idempotent** submit/import/reorder; **version-checked** supplier and buyer
+  writes reject a conflicting concurrent change instead of overwriting.
+- **Typed error catalogue** with safe messages; the UI never shows internal
+  detail.
+- **Local CSV import** that validates, previews added/updated/unchanged/error with
+  a before/after diff, applies atomically and creates no duplicates on re-import.
+- **Verification gates**: `npm run verify` and the CI workflow
+  (`.github/workflows/ci.yml`) run lint, typecheck, unit tests, build and E2E.
 
 ## What P0 deliberately does NOT do
 
@@ -124,10 +147,13 @@ docs/         ADRs, product scope, security notes
 ## Testing
 
 - **Unit / component (Vitest):** domain rules, repository behaviour and tenant
-  isolation, plus catalog UI behaviour.
-- **E2E (Playwright):** catalog → basket grouping → submit → supplier change →
-  buyer decision, supplier isolation, keyboard access, stale/unknown flagging.
-  Runs on desktop and a mobile viewport.
+  isolation (IDOR/BOLA, location scope, role matrix, idempotency/concurrency,
+  parent aggregation, reorder persistence, real CSV import), plus catalog UI
+  behaviour.
+- **E2E (Playwright):** catalog → basket grouping → location selection → submit →
+  supplier change → buyer decision, reorder persistence, supplier isolation,
+  guessed-id not-found, keyboard access, stale/unknown flagging. Runs on desktop
+  and a mobile viewport.
 
 State lives in memory for the page lifetime. E2E tests navigate with in-app links
 because a full page reload resets demo state.

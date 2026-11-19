@@ -14,6 +14,9 @@
  *     reason, never auto-corrected.
  */
 
+import type { BaseUnit } from "./packaging";
+import type { AvailabilityStatus } from "./freshness";
+
 export const IMPORT_COLUMNS = [
   "sku",
   "title",
@@ -243,3 +246,163 @@ export const CSV_TEMPLATE = [
   IMPORT_COLUMNS.join(","),
   "DEMO-SKU-1,Демо товар,Бакалея,мешок 5 кг,1,5,kg,3200,2,2,in_stock",
 ].join("\n");
+
+/* ------------------------------------------------------------------ */
+/* Resolution & diff preview                                           */
+/* ------------------------------------------------------------------ */
+
+/** A fully validated import row, ready to be written to the repository. */
+export interface ResolvedImportOffer {
+  readonly sku: string;
+  readonly title: string;
+  readonly category: string;
+  readonly sellUnitLabel: string;
+  readonly unitsPerSellUnit: number;
+  readonly packAmount: number;
+  readonly packBaseUnit: BaseUnit;
+  readonly pricePerSellUnit: number;
+  readonly moq: number;
+  readonly orderStep: number;
+  readonly availability: AvailabilityStatus | null;
+}
+
+/** The minimal shape of an existing offer the resolver needs for a diff. */
+export interface ExistingOfferSnapshot {
+  readonly sku: string;
+  readonly title: string;
+  readonly pricePerSellUnit: number | null;
+  readonly moq: number;
+  readonly orderStep: number;
+}
+
+export type EnrichedRowStatus = "added" | "updated" | "unchanged" | "error";
+
+export interface EnrichedRow {
+  readonly rowNumber: number;
+  readonly sku: string | null;
+  readonly status: EnrichedRowStatus;
+  readonly errors: readonly string[];
+  /** Human before/after for the preview; only present for non-error rows. */
+  readonly changes: readonly string[];
+  readonly resolved: ResolvedImportOffer | null;
+}
+
+export interface ResolvedImport {
+  readonly rows: readonly EnrichedRow[];
+  readonly resolved: readonly ResolvedImportOffer[];
+  readonly summary: {
+    readonly added: number;
+    readonly updated: number;
+    readonly unchanged: number;
+    readonly errors: number;
+    readonly skipped: number;
+  };
+}
+
+const AVAILABILITY_SET = new Set<string>([
+  "in_stock",
+  "low_stock",
+  "out_of_stock",
+  "on_request",
+]);
+
+/**
+ * Convert a parsed import into resolved offers plus a before/after diff against
+ * the supplier's existing offers. A row is `unchanged` when nothing differs, so
+ * re-importing the same file writes nothing and creates no duplicates.
+ */
+export function resolveImportRows(
+  parsed: ParsedImport,
+  existingOffers: readonly ExistingOfferSnapshot[],
+): ResolvedImport {
+  const existingBySku = new Map(existingOffers.map((o) => [o.sku, o]));
+  const rows: EnrichedRow[] = [];
+  const resolved: ResolvedImportOffer[] = [];
+
+  for (const row of parsed.rows) {
+    if (row.status === "error" || row.errors.length > 0) {
+      rows.push({
+        rowNumber: row.rowNumber,
+        sku: row.sku,
+        status: "error",
+        errors: row.errors,
+        changes: [],
+        resolved: null,
+      });
+      continue;
+    }
+    const v = row.values;
+    const price = Number(v.price_per_sell_unit);
+    const units = Number(v.units_per_sell_unit);
+    const packAmount = Number((v.pack_amount ?? "").replace(",", "."));
+    const moq = Number(v.moq);
+    const step = Number(v.order_step);
+    const availabilityRaw = v.availability ?? "";
+    const resolvedOffer: ResolvedImportOffer = {
+      sku: row.sku ?? "",
+      title: v.title ?? "",
+      category: v.category ?? "",
+      sellUnitLabel: v.sell_unit_label ?? "",
+      unitsPerSellUnit: units,
+      packAmount,
+      packBaseUnit: (v.pack_base_unit ?? "piece") as BaseUnit,
+      pricePerSellUnit: price,
+      moq,
+      orderStep: step,
+      availability: AVAILABILITY_SET.has(availabilityRaw)
+        ? (availabilityRaw as AvailabilityStatus)
+        : null,
+    };
+
+    const existing = existingBySku.get(resolvedOffer.sku);
+    const changes: string[] = [];
+    if (!existing) {
+      changes.push(`новая позиция: ${resolvedOffer.title}, цена ${price}`);
+      rows.push({
+        rowNumber: row.rowNumber,
+        sku: resolvedOffer.sku,
+        status: "added",
+        errors: [],
+        changes,
+        resolved: resolvedOffer,
+      });
+    } else {
+      if (existing.title !== resolvedOffer.title) {
+        changes.push(`название: «${existing.title}» → «${resolvedOffer.title}»`);
+      }
+      if (existing.pricePerSellUnit !== resolvedOffer.pricePerSellUnit) {
+        changes.push(
+          `цена: ${existing.pricePerSellUnit ?? "не указана"} → ${resolvedOffer.pricePerSellUnit}`,
+        );
+      }
+      if (existing.moq !== resolvedOffer.moq) {
+        changes.push(`MOQ: ${existing.moq} → ${resolvedOffer.moq}`);
+      }
+      if (existing.orderStep !== resolvedOffer.orderStep) {
+        changes.push(`шаг: ${existing.orderStep} → ${resolvedOffer.orderStep}`);
+      }
+      const status: EnrichedRowStatus = changes.length > 0 ? "updated" : "unchanged";
+      rows.push({
+        rowNumber: row.rowNumber,
+        sku: resolvedOffer.sku,
+        status,
+        errors: [],
+        changes,
+        resolved: resolvedOffer,
+      });
+    }
+    resolved.push(resolvedOffer);
+  }
+
+  return {
+    rows,
+    resolved,
+    summary: {
+      added: rows.filter((r) => r.status === "added").length,
+      updated: rows.filter((r) => r.status === "updated").length,
+      unchanged: rows.filter((r) => r.status === "unchanged").length,
+      errors: rows.filter((r) => r.status === "error").length,
+      skipped: parsed.summary.skipped,
+    },
+  };
+}

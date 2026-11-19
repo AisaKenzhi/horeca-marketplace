@@ -22,7 +22,8 @@
     "e2e": "playwright test",
     "e2e:ci": "npm run build && playwright test",
     "e2e:install": "playwright install chromium",
-    "verify": "npm run lint && npm run typecheck && npm run test && npm run build"
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run build",
+    "verify:full": "npm run format && npm run lint && npm run typecheck && npm run test:coverage && npm run build"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.2",

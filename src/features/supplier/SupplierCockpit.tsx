@@ -13,7 +13,14 @@ import {
   SUBORDER_STATUS_LABELS,
 } from "@/domain/orderLifecycle";
 import { canEditSupplierCatalog, canRespondToSuborder } from "@/domain/authorization";
-import { CSV_TEMPLATE, parseCatalogCsv } from "@/domain/catalogImport";
+import {
+  CSV_TEMPLATE,
+  parseCatalogCsv,
+  resolveImportRows,
+  type ExistingOfferSnapshot,
+  type ResolvedImport,
+} from "@/domain/catalogImport";
+import { toSafeError } from "@/domain/errors";
 import type { SupplierOffer, SupplierSuborder } from "@/domain/entities";
 import type { AvailabilityStatus } from "@/domain/freshness";
 import type { RevisionLineInput } from "@/domain/revisions";
@@ -74,10 +81,10 @@ function OfferEditor({ offer }: { offer: SupplierOffer }): ReactNode {
                 const n = Number(price);
                 if (!Number.isInteger(n) || n <= 0)
                   throw new Error("Цена должна быть целым положительным числом тенге.");
-                repo.updateOfferPrice(session, offer.id, n);
+                repo.updateOfferPrice(session, offer.id, n, offer.version);
                 setMsg("Цена обновлена (демо). Временная метка обновлена.");
               } catch (e) {
-                setMsg(e instanceof Error ? e.message : messages.common.error);
+                setMsg(toSafeError(e).message);
               }
             }}
           >
@@ -92,10 +99,11 @@ function OfferEditor({ offer }: { offer: SupplierOffer }): ReactNode {
                   session,
                   offer.id,
                   availability === "" ? null : availability,
+                  offer.version,
                 );
                 setMsg("Наличие обновлено (демо).");
               } catch (e) {
-                setMsg(e instanceof Error ? e.message : messages.common.error);
+                setMsg(toSafeError(e).message);
               }
             }}
           >
@@ -115,15 +123,27 @@ function OfferEditor({ offer }: { offer: SupplierOffer }): ReactNode {
 function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactNode {
   const { state, repo, session, messages } = useApp();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const canRespond = canRespondToSuborder(session.membership, suborder.supplierId);
   const parent = state.suborders.find((s) => s.id === suborder.id);
   const revision = state.revisions.find((r) => r.id === suborder.currentRevisionId);
 
+  function guard(fn: () => void): void {
+    setBusy(true);
+    setError(null);
+    try {
+      fn();
+    } catch (e) {
+      setError(toSafeError(e).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function proposePriceChange(): void {
     if (!revision) return;
-    setBusy(true);
-    try {
+    guard(() => {
       const lines: RevisionLineInput[] = revision.lines.map((l) => {
         const offer = state.offers.find((o) => o.id === l.offerId);
         const before = l.priceAfter ?? l.priceBefore;
@@ -144,10 +164,8 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
           reasonDemo: "Изменение цены поставщиком (демо, +100 ₸)",
         };
       });
-      repo.proposeChange(session, suborder.id, lines, null);
-    } finally {
-      setBusy(false);
-    }
+      repo.proposeChange(session, suborder.id, lines, null, suborder.version);
+    });
   }
 
   return (
@@ -177,7 +195,11 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
                 type="button"
                 className="btn btn-primary"
                 disabled={busy}
-                onClick={() => repo.confirmSuborderNoChange(session, suborder.id)}
+                onClick={() =>
+                  guard(() =>
+                    repo.confirmSuborderNoChange(session, suborder.id, suborder.version),
+                  )
+                }
               >
                 {messages.supplier.confirmNoChange}
               </button>
@@ -195,7 +217,10 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() => repo.advanceFulfillment(session, suborder.id, "packing")}
+              disabled={busy}
+              onClick={() =>
+                guard(() => repo.advanceFulfillment(session, suborder.id, "packing"))
+              }
             >
               Начать сборку
             </button>
@@ -204,8 +229,11 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
             <button
               type="button"
               className="btn btn-ghost"
+              disabled={busy}
               onClick={() =>
-                repo.advanceFulfillment(session, suborder.id, "ready_for_handover")
+                guard(() =>
+                  repo.advanceFulfillment(session, suborder.id, "ready_for_handover"),
+                )
               }
             >
               Готово к передаче
@@ -215,10 +243,18 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() => repo.advanceFulfillment(session, suborder.id, "shipped")}
+              disabled={busy}
+              onClick={() =>
+                guard(() => repo.advanceFulfillment(session, suborder.id, "shipped"))
+              }
             >
               Отгрузить
             </button>
+          ) : null}
+          {error ? (
+            <p className="error small" role="alert">
+              {error}
+            </p>
           ) : null}
         </div>
       ) : (
@@ -229,10 +265,11 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
 }
 
 function ImportPanel(): ReactNode {
-  const { repo, session, messages } = useApp();
+  const { state, repo, session, messages } = useApp();
   const [text, setText] = useState(CSV_TEMPLATE);
-  const [result, setResult] = useState<ReturnType<typeof parseCatalogCsv> | null>(null);
-  const [applied, setApplied] = useState(false);
+  const [result, setResult] = useState<ResolvedImport | null>(null);
+  const [applied, setApplied] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const supplierId = session.membership.supplierId;
   const canImport =
@@ -246,12 +283,33 @@ function ImportPanel(): ReactNode {
     );
   }
 
+  // Existing offers for THIS supplier, so the preview can show before/after and
+  // detect duplicates rather than creating them.
+  const existingSnapshots: ExistingOfferSnapshot[] = state.offers
+    .filter((o) => o.supplierId === supplierId)
+    .map((o) => ({
+      sku: o.supplierSku,
+      title: o.title,
+      pricePerSellUnit: o.pricePerSellUnit.value?.amount ?? null,
+      moq: o.packaging.moq,
+      orderStep: o.packaging.orderStep,
+    }));
+
+  function runPreview(): void {
+    setApplied(null);
+    setError(null);
+    const parsed = parseCatalogCsv(text, {
+      existingSkus: existingSnapshots.map((o) => o.sku),
+    });
+    setResult(resolveImportRows(parsed, existingSnapshots));
+  }
+
   return (
     <div className="import-panel">
       <Notice tone="info">
         Импорт выполняется локально, ничего не отправляется. Подозрительные значения
         отклоняются, а не исправляются автоматически. Формулы обезвреживаются, макросы не
-        исполняются.
+        исполняются. Применение атомарное: при любой ошибке не записывается ничего.
       </Notice>
       <label className="field">
         <span>CSV (шаблон уже заполнен демо-строкой)</span>
@@ -264,34 +322,48 @@ function ImportPanel(): ReactNode {
         />
       </label>
       <div className="action-row">
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            const parsed = parseCatalogCsv(text, {
-              existingSkus: [],
-            });
-            setResult(parsed);
-            setApplied(false);
-          }}
-        >
+        <button type="button" className="btn btn-ghost" onClick={runPreview}>
           Предпросмотр и проверка
         </button>
         <button
           type="button"
           className="btn btn-primary"
-          disabled={!result || result.summary.errors > 0}
+          disabled={
+            !result ||
+            result.summary.errors > 0 ||
+            result.summary.added + result.summary.updated === 0
+          }
           onClick={() => {
             if (!result || supplierId === null) return;
-            repo.applyImportJob(session, supplierId, {
-              rows: result.rows,
-              summary: result.summary,
-              appliedOfferIds: [],
-            });
-            setApplied(true);
+            try {
+              const { jobId } = repo.applyCatalogImport(
+                { ...session, idempotencyKey: `import-${supplierId}-${session.nowIso}` },
+                supplierId,
+                result.resolved,
+                {
+                  added: result.summary.added,
+                  updated: result.summary.updated,
+                  errors: result.summary.errors,
+                  skipped: result.summary.skipped,
+                },
+                result.rows.map((r) => ({
+                  rowNumber: r.rowNumber,
+                  status: r.status === "unchanged" ? "skipped" : r.status,
+                  errors: r.errors,
+                  sku: r.sku,
+                })),
+              );
+              setApplied(jobId);
+            } catch (e) {
+              setError(toSafeError(e).message);
+            }
           }}
           title={
-            result && result.summary.errors > 0 ? "Сначала исправьте ошибки" : undefined
+            result && result.summary.errors > 0
+              ? "Сначала исправьте ошибки"
+              : result && result.summary.added + result.summary.updated === 0
+                ? "Нет изменений для применения"
+                : undefined
           }
         >
           {messages.supplier.importCsv}: применить
@@ -301,8 +373,9 @@ function ImportPanel(): ReactNode {
       {result ? (
         <div>
           <p aria-live="polite">
-            Добавлено: {result.summary.added} · Изменено: {result.summary.updated} ·
-            Ошибок: {result.summary.errors} · Пропущено: {result.summary.skipped}
+            Добавлено: {result.summary.added} · Изменено: {result.summary.updated} · Без
+            изменений: {result.summary.unchanged} · Ошибок: {result.summary.errors} ·
+            Пропущено: {result.summary.skipped}
           </p>
           <table className="table">
             <caption className="sr-only">Результат проверки CSV</caption>
@@ -311,6 +384,7 @@ function ImportPanel(): ReactNode {
                 <th scope="col">Строка</th>
                 <th scope="col">SKU</th>
                 <th scope="col">Статус</th>
+                <th scope="col">Изменения</th>
                 <th scope="col">Ошибки</th>
               </tr>
             </thead>
@@ -320,6 +394,7 @@ function ImportPanel(): ReactNode {
                   <td data-label="Строка">{r.rowNumber}</td>
                   <td data-label="SKU">{r.sku ?? "—"}</td>
                   <td data-label="Статус">{r.status}</td>
+                  <td data-label="Изменения">{r.changes.join("; ") || "—"}</td>
                   <td data-label="Ошибки">{r.errors.join("; ") || "—"}</td>
                 </tr>
               ))}
@@ -330,8 +405,13 @@ function ImportPanel(): ReactNode {
 
       {applied ? (
         <p className="ok" role="status">
-          Демо-импорт применён локально. Применённые изменения можно отменить, обновив
-          страницу (данные живут только в этой сессии).
+          Демо-импорт применён локально (задание {applied}). Повторный импорт того же
+          файла не создаёт дублей. Данные живут только в этой сессии.
+        </p>
+      ) : null}
+      {error ? (
+        <p className="error" role="alert">
+          {error}
         </p>
       ) : null}
     </div>
