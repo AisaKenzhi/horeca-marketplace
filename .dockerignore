@@ -1,0 +1,11 @@
+# Docker-only local dev for the P0 prototype. No production services, no
+# external networks, no secrets. Do NOT use this to publish anything.
+node_modules
+dist
+coverage
+playwright-report
+test-results
+.git
+.env
+.env.*
+!.env.example

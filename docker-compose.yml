@@ -1,0 +1,22 @@
+# Local-development compose file.
+#
+# Only a local dev server is defined. There is deliberately:
+#   - no database service (the prototype uses in-browser state),
+#   - no external volume mounts of real data,
+#   - no published production endpoints.
+#
+# Usage:  docker compose up  ->  http://127.0.0.1:5173
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:5173:5173"
+    environment:
+      # Safe, non-secret demo defaults only.
+      VITE_DEFAULT_LOCALE: "ru"
+      VITE_STALENESS_HOURS: "24"
+    # Keep the container from reaching out to anything unexpected.
+    # (There is nothing to fetch; this is a static in-browser prototype.)
+    restart: "no"
