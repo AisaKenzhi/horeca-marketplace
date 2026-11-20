@@ -62,6 +62,22 @@ Static-host config templates live next to this doc:
 
 These are inert until a host is configured and the owner approves the publish.
 
+### Known blocker for a free public publish
+
+The repository is **private**. GitHub Pages on a private repository requires a
+**paid** GitHub plan to serve the site, and a Pages URL is public anyway. So the
+GitHub Pages workflow above is prepared but cannot be a free public host here.
+
+To publish the synthetic demo for free, one of these (each creating an external
+account or paid resource) must be done by the owner:
+
+1. A free-tier static host account (Cloudflare Pages / Netlify / Vercel) — uses
+   `deploy/netlify.toml`, `deploy/_redirects` or `deploy/vercel.json`; or
+2. A paid GitHub plan, then Settings → Pages → Source: GitHub Actions, then run
+   the `Deploy static demo` workflow with the phrase `publish-demo`.
+
+No account, domain or paid plan was created by this work.
+
 ## 4. Launch gates (P0) — status
 
 Legend: PASS = verified in this repo with evidence; FAIL = known gap; NOT

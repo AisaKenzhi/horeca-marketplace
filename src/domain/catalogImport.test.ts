@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CSV_TEMPLATE,
   parseCatalogCsv,
+  resolveImportRows,
   sanitizeCell,
   IMPORT_LIMITS,
 } from "@/domain/catalogImport";
@@ -97,5 +98,42 @@ describe("csv catalog import", () => {
     const result = parseCatalogCsv(csv);
     expect(result.summary.added).toBe(1);
     expect(result.rows[0]!.values.title).toBe("Товар, большой");
+  });
+});
+
+describe("resolveImportRows: unchanged rows are not queued for writing", () => {
+  const CSV =
+    "sku,title,category,sell_unit_label,units_per_sell_unit,pack_amount,pack_base_unit,price_per_sell_unit,moq,order_step,availability\n" +
+    "SAME-1,Товар,Бакалея,мешок 5 кг,1,5,kg,3200,2,2,in_stock\n" +
+    "NEW-1,Новый,Бакалея,мешок 1 кг,1,1,kg,1500,1,1,in_stock";
+
+  const existing = [
+    {
+      sku: "SAME-1",
+      title: "Товар",
+      pricePerSellUnit: 3200,
+      moq: 2,
+      orderStep: 2,
+    },
+  ];
+
+  it("excludes unchanged rows from `resolved` but keeps them in the preview", () => {
+    const parsed = parseCatalogCsv(CSV, { existingSkus: existing.map((e) => e.sku) });
+    const resolved = resolveImportRows(parsed, existing);
+    expect(resolved.summary.unchanged).toBe(1);
+    expect(resolved.summary.added).toBe(1);
+    // Only the genuinely new row is queued for a write.
+    expect(resolved.resolved.map((r) => r.sku)).toEqual(["NEW-1"]);
+    // The preview still lists both rows for the user.
+    expect(resolved.rows.map((r) => r.status)).toEqual(["unchanged", "added"]);
+  });
+
+  it("still queues a genuinely changed row", () => {
+    const parsed = parseCatalogCsv(CSV, { existingSkus: existing.map((e) => e.sku) });
+    const resolved = resolveImportRows(parsed, [
+      { ...existing[0]!, pricePerSellUnit: 9999 },
+    ]);
+    expect(resolved.summary.updated).toBe(1);
+    expect(resolved.resolved.map((r) => r.sku)).toEqual(["SAME-1", "NEW-1"]);
   });
 });

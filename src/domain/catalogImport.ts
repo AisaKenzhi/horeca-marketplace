@@ -289,6 +289,11 @@ export interface EnrichedRow {
 
 export interface ResolvedImport {
   readonly rows: readonly EnrichedRow[];
+  /**
+   * Offers that actually need a WRITE (added or updated). `unchanged` rows are
+   * deliberately excluded so a re-import of the same file changes nothing and
+   * never bumps an offer version. The full per-row preview stays in `rows`.
+   */
   readonly resolved: readonly ResolvedImportOffer[];
   readonly summary: {
     readonly added: number;
@@ -390,6 +395,8 @@ export function resolveImportRows(
         changes,
         resolved: resolvedOffer,
       });
+      // An `unchanged` row is only a preview entry: do NOT queue it for a write.
+      if (status === "unchanged") continue;
     }
     resolved.push(resolvedOffer);
   }
