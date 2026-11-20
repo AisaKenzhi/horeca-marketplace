@@ -49,6 +49,7 @@ export function isValidPackaging(spec: PackagingSpec): boolean {
   return (
     Number.isInteger(sellUnit.unitsPerSellUnit) &&
     sellUnit.unitsPerSellUnit > 0 &&
+    Number.isFinite(sellUnit.packSize.amount) &&
     sellUnit.packSize.amount > 0 &&
     Number.isInteger(moq) &&
     moq > 0 &&
@@ -126,11 +127,18 @@ export function unitPrice(
     return { comparable: false, reason: "invalid_pack" };
   }
   const exact = pricePerSellUnitMinor / perUnit;
+  // Binary floating point makes a mathematically exact ratio look inexact: e.g.
+  // 3 / (3 * 0.1) is exactly 10 but computes to 9.999999999999998. Only claim
+  // exactness when the quotient is within a small relative tolerance of an
+  // integer, so a genuinely comparable price is never mislabelled inexact.
+  const nearest = Math.round(exact);
+  const tolerance = Math.abs(exact) * 1e-9 + 1e-9;
+  const exactInteger = Math.abs(exact - nearest) <= tolerance;
   return {
     comparable: true,
     baseUnit: sellUnit.packSize.baseUnit,
     perBaseUnitMinor: Math.round(exact),
-    exactlyDivisible: Number.isInteger(exact),
+    exactlyDivisible: exactInteger,
   };
 }
 
