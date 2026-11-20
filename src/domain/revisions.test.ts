@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decideOnRevision,
+  describeRevisionLine,
   hasAnyChange,
   proposeSupplierRevision,
   type RevisionLineInput,
@@ -221,5 +222,53 @@ describe("revisions", () => {
         existingDecisions: [],
       }),
     ).toThrow(/not awaiting/);
+  });
+});
+
+describe("describeRevisionLine", () => {
+  const base = revisionFor(makeSuborder().id, "rev-1").lines[0]!;
+
+  it("describes every change kind as a human before/after or label", () => {
+    expect(describeRevisionLine({ ...base, changeKind: "unchanged" })).toBe(
+      "Без изменений",
+    );
+    expect(describeRevisionLine({ ...base, changeKind: "price_changed" })).toContain(
+      "3200",
+    );
+    expect(
+      describeRevisionLine({
+        ...base,
+        changeKind: "quantity_changed",
+        quantityBefore: 2,
+        quantityAfter: 4,
+      }),
+    ).toContain("4");
+    expect(
+      describeRevisionLine({
+        ...base,
+        changeKind: "packaging_changed",
+        sellUnitLabelBefore: "мешок 5 кг",
+        sellUnitLabelAfter: "мешок 10 кг",
+      }),
+    ).toContain("10 кг");
+    expect(describeRevisionLine({ ...base, changeKind: "substituted" })).toBe(
+      "Предложена замена позиции",
+    );
+    expect(describeRevisionLine({ ...base, changeKind: "delivery_window_changed" })).toBe(
+      "Изменено окно доставки",
+    );
+  });
+
+  it("never fabricates a value it does not have", () => {
+    // Missing before/after values render as an em dash, never as 0 or "".
+    const line = {
+      ...base,
+      changeKind: "price_changed" as const,
+      priceBefore: null,
+      priceAfter: null,
+    };
+    const text = describeRevisionLine(line);
+    expect(text).toContain("—");
+    expect(text).not.toContain("0 →");
   });
 });

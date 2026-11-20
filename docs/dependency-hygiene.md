@@ -27,27 +27,42 @@ advisories were cleared:
   promise; the single call site is marked with `void`. The v7 future-flag
   warnings in tests are gone. Full gate (`verify:full`) and E2E stayed green.
 
-## Dev-toolchain advisories (tracked, deliberately deferred)
+## Dev-toolchain advisories — resolved
 
-The remaining `npm audit` entries are all in the **dev/build toolchain** and
-never reach a user's browser. Their only fixes are breaking majors:
+The dev/build toolchain was upgraded as one tested group, clearing every
+remaining advisory (including the transitive ones):
 
-| Package                                                                                   | Severity     | Scope          | Fix offered          | Why deferred now                                       |
-| ----------------------------------------------------------------------------------------- | ------------ | -------------- | -------------------- | ------------------------------------------------------ |
-| `vitest`                                                                                  | critical     | dev-only       | `vitest@5` (major)   | Test tool only; never shipped to a user.               |
-| `@vitest/coverage-v8`                                                                     | critical     | dev-only       | v5 (major)           | Test tool only.                                        |
-| `vite`                                                                                    | high         | dev/build tool | `vite@8` (major)     | Build tool only; the built bundle does not include it. |
-| `esbuild`, `tinypool`, `glob`, `minimatch`, `@vitest/mocker`, `vite-node`, `test-exclude` | low–critical | dev-only       | via the majors above | Transitive dev-tool dependencies; no user surface.     |
+| Package                | From  | To      |
+| ---------------------- | ----- | ------- |
+| `vite`                 | `5.4` | `8.3.8` |
+| `vitest`               | `2.1` | `5.1.1` |
+| `@vitest/coverage-v8`  | `2.1` | `5.1.1` |
+| `@vitejs/plugin-react` | `4.7` | `6.3.0` |
 
-A follow-up task can upgrade the dev toolchain as one tested group if desired;
-it is not a security exposure.
+`esbuild`, `tinypool`, `glob`, `minimatch`, `@vitest/mocker`, `vite-node` and
+`test-exclude` came along as transitive dev-only dependencies.
+
+Notes on the upgrade:
+
+- The majors cannot be staged one at a time: `@vitejs/plugin-react@6` requires
+  `vite@^8`, and `vitest@5` already accepts `vite@^8`/`^7`/`^6`. They were moved
+  together, with the lockfile regenerated from the new `package.json`.
+- Vitest 5's v8 coverage provider measures branches differently than vitest 2,
+  so the reported numbers moved. Rather than lower the floor to hide the change,
+  real tests were added (`errors.test.ts`, `storage.test.ts`,
+  `describeRevisionLine`) and the floors were left where the honest post-upgrade
+  values clear them.
+- `npm audit` (full tree, not just `--omit=dev`) now reports **0
+  vulnerabilities**.
 
 ## What was done
 
 - `zod` removed (unused); `react-router-dom` upgraded to v7; `npm audit --omit=dev`
   is clean.
+- Dev/test/build toolchain upgraded to vite 8 / vitest 5 / coverage 5 /
+  plugin-react 6; the full `npm audit` is now clean too.
 - The full gate is `npm run verify:full` (format, lint, typecheck, coverage,
-  build); E2E is `npm run e2e`. Both stayed green across the upgrade.
+  build); E2E is `npm run e2e`. Both stayed green across every upgrade.
 
 ## Licenses
 
