@@ -46,3 +46,32 @@ Then publish `dist/` (e.g. to a `gh-pages` branch). Add a `404.html` copy of
 - [ ] No secrets, real data, analytics or external calls are added to enable the
       host.
 - [ ] Rollback is agreed (delete the deployment; nothing persists server-side).
+
+## Option E — serve it directly on this host (no new account, no domain)
+
+`deploy/serve-local-demo.sh` builds `dist/` and serves it with nginx on a
+**dedicated port** (default `8080`), reversibly:
+
+```bash
+./deploy/serve-local-demo.sh          # serves on 127.0.0.1:8080
+./deploy/serve-local-demo.sh 8090     # a different port
+```
+
+It does **not** touch any other site, domain, certificate, DNS record or cloud
+firewall rule on the host. Undo:
+
+```bash
+sudo rm /etc/nginx/sites-enabled/horeca-demo && sudo systemctl reload nginx
+sudo rm -rf /var/www/horeca-demo
+```
+
+**Exposing it to the internet** is a separate, deliberate step that needs one of
+(and is intentionally NOT done by the script):
+
+- open the chosen port in the host/cloud firewall; and/or
+- point a hostname at the host and add a matching `server_name`.
+
+On this particular host only ports 22/80/443 are reachable from the internet, and
+80/443 already serve an unrelated production site, so a public demo here would
+require either a firewall change or a DNS record. That decision belongs to the
+owner; the script stops at a local, reversible serve.
