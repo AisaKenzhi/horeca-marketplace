@@ -126,6 +126,8 @@ First E2E run may need a browser: `npm run e2e:install` (Chromium).
 - No XLSX/ERP/1C import (CSV only, local and validated).
 
 See `docs/product-scope.md`, `docs/adr.md` and `docs/security.md`.
+Deployability and the honest launch-gate status are in
+`docs/deploy-readiness.md` (with static-host templates under `deploy/`).
 
 ---
 
