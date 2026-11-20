@@ -660,6 +660,22 @@ describe("repository: tenant isolation (IDOR/BOLA)", () => {
     expect(betaVisible[0]!.supplierId).toBe("sup-beta");
   });
 
+  it("lets a supplier open a parent it has a branch in, but not one it does not", () => {
+    const repo = makeRepo();
+    const { procurementId } = submittedProcurement(repo);
+    // Alpha and Beta both have a branch here.
+    expect(repo.getVisibleParent(supplierAlpha, procurementId)).toBeDefined();
+    expect(repo.getVisibleParent(supplierBetaOwner, procurementId)).toBeDefined();
+    // A supplier with no branch in a parent cannot open it. Build a parent with
+    // only Alpha by moving the basket to a zone Beta does not cover.
+    const repo2 = makeRepo();
+    repo2.setBasketLocation(buyer, asBuyerLocationId("loc-cafe-2"));
+    const { procurementId: alphaOnly } = repo2.submitBasket(buyer);
+    expect(repo2.getVisibleParent(supplierAlpha, alphaOnly)).toBeDefined();
+    expect(repo2.getVisibleParent(supplierBetaOwner, alphaOnly)).toBeUndefined();
+    expect(repo2.visibleSubordersOf(supplierBetaOwner, alphaOnly)).toHaveLength(0);
+  });
+
   it("refuses a buyer decision on a suborder belonging to another org", () => {
     const repo = makeRepo();
     const { alphaSub } = submittedProcurement(repo);
