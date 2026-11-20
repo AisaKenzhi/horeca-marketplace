@@ -54,8 +54,22 @@ sudo cp -r "$HERE/dist/." "$ROOT/"
 printf 'User-agent: *\nDisallow: /\n' | sudo tee "$ROOT/robots.txt" >/dev/null
 sudo chown -R www-data:www-data "$ROOT" 2>/dev/null || true
 
-echo "==> Installing the nginx vhost for $HOST (HTTP first)"
-sudo tee "$SITE" >/dev/null <<NGINX
+# If a live certificate already exists, do NOT overwrite the vhost with a plain
+# HTTP draft: certbot managed that file and it already serves TLS. Reinstalling
+# is enough. This keeps the script idempotent (a second run must not take the
+# demo offline or ask an interactive question).
+CERT_DIR="/etc/letsencrypt/live/$HOST"
+EXISTING_CERT=0
+if sudo test -f "$CERT_DIR/fullchain.pem"; then
+  EXISTING_CERT=1
+fi
+
+if [[ "$EXISTING_CERT" -eq 1 ]]; then
+  echo "==> Existing certificate found for $HOST — keeping its vhost, no rewrite"
+  sudo ln -sf "$SITE" /etc/nginx/sites-enabled/horeca-demo-domain
+else
+  echo "==> Installing the nginx vhost for $HOST (HTTP first)"
+  sudo tee "$SITE" >/dev/null <<NGINX
 # HoReCa Marketplace — private static demo for $HOST (synthetic data only).
 # This vhost matches ONLY this hostname; other sites on this host are untouched.
 server {
@@ -85,15 +99,20 @@ server {
     }
 }
 NGINX
-sudo ln -sf "$SITE" /etc/nginx/sites-enabled/horeca-demo-domain
+  sudo ln -sf "$SITE" /etc/nginx/sites-enabled/horeca-demo-domain
 
-echo "==> Validating and reloading nginx"
-sudo nginx -t
-sudo systemctl reload nginx
+  echo "==> Validating and reloading nginx"
+  sudo nginx -t
+  sudo systemctl reload nginx
+fi
 
 echo "==> Requesting a Let's Encrypt certificate for $HOST (certbot --nginx)"
 # --nginx edits ONLY the matching server block; other vhosts are left alone.
-CERTBOT_ARGS=(--nginx -d "$HOST" --agree-tos --redirect --no-eff-email)
+# Always non-interactive: re-running must never hang on a prompt.
+CERTBOT_ARGS=(--nginx -d "$HOST" --agree-tos --redirect --no-eff-email --non-interactive)
+if [[ "$EXISTING_CERT" -eq 1 ]]; then
+  CERTBOT_ARGS+=(--reinstall)
+fi
 if [[ -n "$EMAIL" ]]; then
   CERTBOT_ARGS+=(-m "$EMAIL")
 else
