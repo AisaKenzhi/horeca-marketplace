@@ -43,6 +43,11 @@ describe("money", () => {
   });
 
   it("formats as a rounded KZT amount", () => {
-    expect(formatMoney(money(1_500_000))).toContain("1");
+    // KZT's ISO 4217 minor unit is 0 (whole tenge), so 1_500_000 minor units is
+    // 1 500 000 ₸. Assert the exact grouping/currency so a broken formatter
+    // cannot pass.
+    const formatted = formatMoney(money(1_500_000));
+    expect(formatted).toMatch(/1\s?500\s?000/);
+    expect(formatted).toContain("₸");
   });
 });

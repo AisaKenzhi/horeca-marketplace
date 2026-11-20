@@ -4,6 +4,7 @@ import {
   describeRevisionLine,
   hasAnyChange,
   proposeSupplierRevision,
+  snapshotFromRevision,
   type RevisionLineInput,
 } from "@/domain/revisions";
 import { asRevisionId } from "@/domain/ids";
@@ -222,6 +223,59 @@ describe("revisions", () => {
         existingDecisions: [],
       }),
     ).toThrow(/not awaiting/);
+  });
+
+  it("never fabricates a 0 KZT binding price on a line with no known price", () => {
+    const sub = makeSuborder({
+      status: "awaiting_buyer_decision",
+      currentRevisionId: asRevisionId("rev-1"),
+    });
+    const base = revisionFor(sub.id, "rev-1");
+    const revision: SuborderRevision = {
+      ...base,
+      suborderId: sub.id,
+      lines: [
+        {
+          ...base.lines[0]!,
+          changeKind: "substituted",
+          priceBefore: null,
+          priceAfter: null,
+          substitutedFromOfferId: "offer-old" as never,
+          substitutedToOfferId: "offer-new" as never,
+        },
+      ],
+    };
+    // Accepting must be refused rather than binding a silent 0 ₸ line.
+    expect(() =>
+      decideOnRevision({
+        suborder: sub,
+        revision,
+        outcome: "accepted",
+        decidedBy: sub.orgId as never,
+        nowIso: NOW,
+        existingDecisions: [],
+      }),
+    ).toThrow(/без известной цены/);
+    // The snapshot builder itself must never invent a value either.
+    expect(() => snapshotFromRevision(revision)).toThrow(/без цены и количества/);
+  });
+
+  it("still binds a complete snapshot when the price is present", () => {
+    const sub = makeSuborder({
+      status: "awaiting_buyer_decision",
+      currentRevisionId: asRevisionId("rev-1"),
+    });
+    const revision = { ...revisionFor(sub.id, "rev-1"), suborderId: sub.id };
+    const { suborder } = decideOnRevision({
+      suborder: sub,
+      revision,
+      outcome: "accepted",
+      decidedBy: sub.orgId as never,
+      nowIso: NOW,
+      existingDecisions: [],
+    });
+    expect(suborder.confirmedLines?.[0]?.pricePerSellUnit.amount).toBe(3500);
+    expect(suborder.confirmedLines?.[0]?.quantity).toBe(2);
   });
 });
 
