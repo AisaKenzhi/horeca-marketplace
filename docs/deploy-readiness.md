@@ -108,14 +108,14 @@ VERIFIED = cannot be checked here (no environment/access).
 An RC is provided so the owner can decide on a **demo** publish. It is **not**
 a production release.
 
-| Field          | Value                                                                            |
-| -------------- | -------------------------------------------------------------------------------- |
-| Commit         | `182c258` (post-hardening `main`; local synthetic demo)                          |
-| Artifact       | `dist/` from `npm run build`                                                     |
-| Target         | a static host, owner's choice; no domain purchased                               |
-| Operating mode | **public read-only synthetic demo** — no accounts, no orders, no data collection |
-| Rollback       | delete the static deployment; nothing persists server-side                       |
-| Approve by     | owner, explicitly, naming commit + target + mode                                 |
+| Field          | Value                                                                                                                        |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Commit         | `fae5165` (post-hardening `main`; local synthetic demo)                                                                      |
+| Artifact       | `dist/` from `npm run build`                                                                                                 |
+| Target         | a static host, owner's choice; no domain purchased; a reversible local serve is available (see `deploy/serve-local-demo.sh`) |
+| Operating mode | **public read-only synthetic demo** — no accounts, no orders, no data collection                                             |
+| Rollback       | delete the static deployment; nothing persists server-side                                                                   |
+| Approve by     | owner, explicitly, naming commit + target + mode                                                                             |
 
 Verified at this commit: `npm run verify:full` (lint 0 errors, typecheck, 183
 tests, coverage 87.37 / 77.65 / 92.36 / 89.94, build) and Playwright E2E
