@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildInitialState, Repository, type SessionContext } from "@/data/repository";
 import {
-  basket as seedBasket,
+  baskets as seedBaskets,
   buyerLists,
   buyerLocations,
   memberships,
@@ -19,6 +19,7 @@ import {
 } from "@/domain/ids";
 import { money } from "@/domain/money";
 import { parseCatalogCsv, resolveImportRows } from "@/domain/catalogImport";
+import type { Basket } from "@/domain/entities";
 
 function makeRepo(): Repository {
   return new Repository(
@@ -30,10 +31,17 @@ function makeRepo(): Repository {
       products,
       offers,
       buyerLists,
-      basket: seedBasket,
+      baskets: seedBaskets,
       notifications,
     }),
   );
+}
+
+/** The café org's basket (the org the default `buyer` persona belongs to). */
+function cafeBasket(repo: Repository): Basket {
+  const b = repo.getState().baskets.find((x) => x.orgId === "org-demo-cafe");
+  if (!b) throw new Error("cafe basket missing");
+  return b;
 }
 
 const buyer: SessionContext = {
@@ -73,16 +81,14 @@ describe("repository: submit basket -> supplier suborders", () => {
   it("submits only groups that meet the supplier minimum, holding the rest", () => {
     const repo = makeRepo();
     // Drop Alpha below its minimum; only Beta should be submitted.
-    const alphaLine = repo
-      .getState()
-      .basket.lines.find((l) => l.supplierId === "sup-alpha")!;
+    const alphaLine = cafeBasket(repo).lines.find((l) => l.supplierId === "sup-alpha")!;
     repo.setBasketLineQuantity(buyer, alphaLine.id, 2); // 2 * 3200 = 6400 < 15000
     const { suborderIds } = repo.submitBasket(buyer);
     const state = repo.getState();
     expect(suborderIds).toHaveLength(1);
     expect(state.suborders[0]!.supplierId).toBe("sup-beta");
     // Alpha's unready line stays in the basket for the buyer to fix.
-    expect(state.basket.lines.some((l) => l.supplierId === "sup-alpha")).toBe(true);
+    expect(cafeBasket(repo).lines.some((l) => l.supplierId === "sup-alpha")).toBe(true);
   });
 
   it("refuses submission from a viewer", () => {
@@ -92,7 +98,7 @@ describe("repository: submit basket -> supplier suborders", () => {
 
   it("refuses to submit when no group is ready", () => {
     const repo = makeRepo();
-    for (const line of repo.getState().basket.lines) {
+    for (const line of cafeBasket(repo).lines) {
       repo.setBasketLineQuantity(buyer, line.id, 1);
     }
     expect(() => repo.submitBasket(buyer)).toThrow(/готовой к отправке/);
@@ -114,6 +120,55 @@ describe("repository: submit basket -> supplier suborders", () => {
       expect(Object.keys(event.metadata)).not.toContain("address");
       expect(Object.keys(event.metadata)).not.toContain("phone");
     }
+  });
+});
+
+describe("repository: per-org baskets (multi-tenant)", () => {
+  const hotelOwner: SessionContext = {
+    membership: memberships.find((m) => m.id === "mem-buyer-hotel")!,
+    nowIso: "2026-11-19T12:00:00.000Z",
+  };
+
+  it("a second buyer org has its own basket and can add/remove in it", () => {
+    const repo = makeRepo();
+    // Hotel starts empty even though the café basket has lines.
+    expect(repo.getBasketForOrg(hotelOwner).lines).toHaveLength(0);
+    repo.addToBasket(hotelOwner, "off-alpha-flour", 6);
+    expect(repo.getBasketForOrg(hotelOwner).lines).toHaveLength(1);
+    // The café's basket is untouched by the hotel's write.
+    expect(cafeBasket(repo).lines).toHaveLength(2);
+  });
+
+  it("one org's basket never leaks into another org's read", () => {
+    const repo = makeRepo();
+    const hotelBasket = repo.getBasketForOrg(hotelOwner);
+    expect(hotelBasket.orgId).toBe("org-demo-hotel");
+    expect(hotelBasket.lines).toHaveLength(0);
+    const cafeBasketView = repo.getBasketForOrg(buyer);
+    expect(cafeBasketView.orgId).toBe("org-demo-cafe");
+    expect(cafeBasketView.lines.length).toBeGreaterThan(0);
+  });
+
+  it("a second org can submit its own procurement without touching the first", () => {
+    const repo = makeRepo();
+    // Café submits its ready groups.
+    const cafe = repo.submitBasket(buyer);
+    // Hotel prepares its own basket (choose its own location first).
+    repo.setBasketLocation(hotelOwner, "loc-hotel-1");
+    repo.addToBasket(hotelOwner, "off-alpha-flour", 6);
+    const hotel = repo.submitBasket(hotelOwner);
+    expect(hotel.procurementId).not.toBe(cafe.procurementId);
+    const parents = repo.getState().parents;
+    const hotelParent = parents.find((p) => p.id === hotel.procurementId)!;
+    expect(hotelParent.orgId).toBe("org-demo-hotel");
+    // The hotel cannot see the café's parent and vice versa.
+    expect(repo.getVisibleParent(hotelOwner, cafe.procurementId)).toBeUndefined();
+    expect(repo.getVisibleParent(buyer, hotel.procurementId)).toBeUndefined();
+  });
+
+  it("cannot set a basket location belonging to another org", () => {
+    const repo = makeRepo();
+    expect(() => repo.setBasketLocation(hotelOwner, "loc-cafe-1")).toThrow(/недоступна/i);
   });
 });
 
@@ -482,7 +537,7 @@ describe("repository: role matrix", () => {
 
   it("refuses a viewer or receiver changing basket lines or lists", () => {
     const repo = makeRepo();
-    const lineId = repo.getState().basket.lines[0]!.id;
+    const lineId = cafeBasket(repo).lines[0]!.id;
     expect(() => repo.setBasketLineQuantity(receiver, lineId, 4)).toThrow(/прав/i);
     expect(() => repo.removeBasketLine(receiver, lineId)).toThrow(/прав/i);
     expect(() => repo.addToList(receiver, "list-cafe-weekly", "off-alpha-flour")).toThrow(
@@ -656,16 +711,16 @@ describe("repository: reorder persists a new draft", () => {
     const repo = makeRepo();
     const { alphaSub } = submittedProcurement(repo);
     // Clear the basket so we can observe reorder lines land in it.
-    for (const line of [...repo.getState().basket.lines]) {
+    for (const line of [...cafeBasket(repo).lines]) {
       repo.removeBasketLine(buyer, line.id);
     }
     const { draft, replayed } = repo.reorderIntoBasket(buyer, alphaSub);
     expect(replayed).toBe(false);
     expect(draft.summary.carried).toBeGreaterThan(0);
     const state = repo.getState();
-    expect(state.basket.lines.length).toBe(draft.summary.carried);
+    expect(cafeBasket(repo).lines.length).toBe(draft.summary.carried);
     // The draft carries intent, not the old price snapshot.
-    for (const line of state.basket.lines) {
+    for (const line of cafeBasket(repo).lines) {
       const offer = state.offers.find((o) => o.id === line.offerId)!;
       expect(line.addedAtPriceSnapshot?.amount).toBe(
         offer.pricePerSellUnit.value?.amount,

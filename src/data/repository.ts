@@ -34,6 +34,7 @@ import type {
 } from "@/domain/entities";
 import {
   asAuditEventId,
+  asBasketId,
   asBasketLineId,
   asFulfillmentEventId,
   asImportJobId,
@@ -120,7 +121,12 @@ export interface RepositoryState {
   products: Product[];
   offers: SupplierOffer[];
   buyerLists: BuyerList[];
-  basket: Basket;
+  /**
+   * One basket per buyer org. In a multi-tenant product each organization has
+   * its own basket; a single shared basket would let one org's lines leak into
+   * (or block) another's. Look baskets up by `orgId`, never by position.
+   */
+  baskets: Basket[];
   parents: ParentProcurement[];
   suborders: SupplierSuborder[];
   revisions: SuborderRevision[];
@@ -152,7 +158,7 @@ export function buildInitialState(seed: {
   products: readonly Product[];
   offers: readonly SupplierOffer[];
   buyerLists: readonly BuyerList[];
-  basket: Basket;
+  baskets: readonly Basket[];
   notifications: readonly NotificationEvent[];
 }): RepositoryState {
   return {
@@ -163,7 +169,7 @@ export function buildInitialState(seed: {
     products: [...seed.products],
     offers: [...seed.offers],
     buyerLists: [...seed.buyerLists],
-    basket: seed.basket,
+    baskets: seed.baskets.map((b) => structuredClone(b)),
     parents: [],
     suborders: [],
     revisions: [],
@@ -236,6 +242,25 @@ export class Repository {
 
   /* ------------------------------ Lookups ------------------------------ */
 
+  /**
+   * The basket for an org, or undefined. Baskets are keyed by orgId; there is
+   * never a shared/global basket, so one tenant can't read or block another's.
+   */
+  private findBasket(state: RepositoryState, orgId: string): Basket | undefined {
+    return state.baskets.find((b) => b.orgId === orgId);
+  }
+
+  /** An empty basket for an org that has not started one yet. */
+  private emptyBasketFor(orgId: string): Basket {
+    return {
+      id: asBasketId(`basket-${orgId}`),
+      orgId: orgId as Basket["orgId"],
+      // No location is pre-selected; the buyer must choose one explicitly.
+      locationId: "" as Basket["locationId"],
+      lines: [],
+    };
+  }
+
   offersById(): ReadonlyMap<string, SupplierOffer> {
     return new Map(this.state.offers.map((o) => [o.id as string, o]));
   }
@@ -307,22 +332,25 @@ export class Repository {
   /* --------------------------- Buyer: basket --------------------------- */
 
   getBasketForOrg(ctx: SessionContext): Basket {
-    if (ctx.membership.orgId !== this.state.basket.orgId) {
-      // Return an empty basket rather than leaking another org's basket.
-      return { ...this.state.basket, orgId: ctx.membership.orgId, lines: [] };
+    const basket = this.findBasket(this.state, ctx.membership.orgId);
+    if (!basket) {
+      // No basket yet for this org: an empty one, never another org's.
+      return this.emptyBasketFor(ctx.membership.orgId);
     }
-    // Only expose the basket if the acting member may access its location.
-    const loc = this.locationsById().get(this.state.basket.locationId);
-    if (!canAccessLocation(ctx.membership, loc)) {
-      return { ...this.state.basket, lines: [] };
+    // Only expose the lines if the acting member may access the location the
+    // basket is bound to. This is defence in depth on top of the org keying.
+    const loc = this.locationsById().get(basket.locationId);
+    if (basket.locationId !== "" && !canAccessLocation(ctx.membership, loc)) {
+      return { ...basket, lines: [] };
     }
-    return this.state.basket;
+    return basket;
   }
 
   /** The buyer's current deliver-to location for the basket, tenant-checked. */
   getBasketLocation(ctx: SessionContext): BuyerLocation | undefined {
-    if (ctx.membership.orgId !== this.state.basket.orgId) return undefined;
-    const loc = this.locationsById().get(this.state.basket.locationId);
+    const basket = this.findBasket(this.state, ctx.membership.orgId);
+    if (!basket || basket.locationId === "") return undefined;
+    const loc = this.locationsById().get(basket.locationId);
     return canAccessLocation(ctx.membership, loc) ? loc : undefined;
   }
 
@@ -331,7 +359,7 @@ export class Repository {
    * must belong to the acting buyer org; it is never inferred from "the first".
    */
   setBasketLocation(ctx: SessionContext, locationId: string): void {
-    if (!canManageBasket(ctx.membership, this.state.basket.orgId)) {
+    if (!canManageBasket(ctx.membership, ctx.membership.orgId)) {
       throw forbiddenError("Недостаточно прав для изменения точки доставки.");
     }
     const loc = this.state.buyerLocations.find((l) => l.id === locationId);
@@ -340,13 +368,19 @@ export class Repository {
       throw forbiddenError("Эта точка доставки недоступна вашей организации.");
     }
     const next = cloneState(this.state);
-    next.basket = { ...next.basket, locationId: loc.id };
+    const basket =
+      this.findBasket(next, ctx.membership.orgId) ??
+      this.emptyBasketFor(ctx.membership.orgId);
+    const updated: Basket = { ...basket, locationId: loc.id };
+    next.baskets = this.findBasket(next, ctx.membership.orgId)
+      ? next.baskets.map((b) => (b.orgId === ctx.membership.orgId ? updated : b))
+      : [...next.baskets, updated];
     this.audit(next, ctx, "basket.setLocation", "BuyerLocation", locationId);
     this.commit(next);
   }
 
   addToBasket(ctx: SessionContext, offerId: string, quantity: number): void {
-    if (!canManageBasket(ctx.membership, this.state.basket.orgId)) {
+    if (!canManageBasket(ctx.membership, ctx.membership.orgId)) {
       throw forbiddenError("Недостаточно прав для изменения корзины.");
     }
     const offer = this.state.offers.find((o) => o.id === offerId);
@@ -357,17 +391,15 @@ export class Repository {
       throw validationError("Количество должно быть целым положительным числом.");
     }
     const next = cloneState(this.state);
-    if (next.basket.orgId !== ctx.membership.orgId) {
-      throw forbiddenError("Корзина принадлежит другой организации.");
-    }
-    const existing = next.basket.lines.find((l) => l.offerId === offerId);
+    const basket =
+      this.findBasket(next, ctx.membership.orgId) ??
+      this.emptyBasketFor(ctx.membership.orgId);
+    const existing = basket.lines.find((l) => l.offerId === offerId);
+    let lines: readonly BasketLine[];
     if (existing) {
-      next.basket = {
-        ...next.basket,
-        lines: next.basket.lines.map((l) =>
-          l.offerId === offerId ? { ...l, quantity: l.quantity + quantity } : l,
-        ),
-      };
+      lines = basket.lines.map((l) =>
+        l.offerId === offerId ? { ...l, quantity: l.quantity + quantity } : l,
+      );
     } else {
       const line: BasketLine = {
         id: asBasketLineId(this.nextId("bl")),
@@ -377,8 +409,12 @@ export class Repository {
         addedAtPriceSnapshot: offer.pricePerSellUnit.value,
         addedAt: asIso(ctx.nowIso),
       };
-      next.basket = { ...next.basket, lines: [...next.basket.lines, line] };
+      lines = [...basket.lines, line];
     }
+    const updated: Basket = { ...basket, lines };
+    next.baskets = this.findBasket(next, ctx.membership.orgId)
+      ? next.baskets.map((b) => (b.orgId === ctx.membership.orgId ? updated : b))
+      : [...next.baskets, updated];
     this.audit(next, ctx, "basket.add", "SupplierOffer", offerId, { quantity });
     this.commit(next);
   }
@@ -388,42 +424,53 @@ export class Repository {
     lineId: BasketLineId,
     quantity: number,
   ): void {
-    if (!canManageBasket(ctx.membership, this.state.basket.orgId)) {
+    if (!canManageBasket(ctx.membership, ctx.membership.orgId)) {
       throw forbiddenError("Недостаточно прав для изменения корзины.");
     }
     if (!Number.isInteger(quantity) || quantity <= 0) {
       throw validationError("Количество должно быть целым положительным числом.");
     }
-    if (!this.state.basket.lines.some((l) => l.id === lineId)) {
+    const basket = this.findBasket(this.state, ctx.membership.orgId);
+    if (!basket || !basket.lines.some((l) => l.id === lineId)) {
       throw notFoundError("Строка корзины не найдена.");
     }
     const next = cloneState(this.state);
-    next.basket = {
-      ...next.basket,
-      lines: next.basket.lines.map((l) =>
-        l.id === lineId
-          ? // Refresh the snapshot so a deliberate quantity change re-baselines
-            // the price the buyer is looking at.
-            { ...l, quantity, addedAtPriceSnapshot: this.livePriceFor(l.offerId) }
-          : l,
-      ),
-    };
+    next.baskets = next.baskets.map((b) =>
+      b.orgId === ctx.membership.orgId
+        ? {
+            ...b,
+            lines: b.lines.map((l) =>
+              l.id === lineId
+                ? // Refresh the snapshot so a deliberate quantity change
+                  // re-baselines the price the buyer is looking at.
+                  {
+                    ...l,
+                    quantity,
+                    addedAtPriceSnapshot: this.livePriceFor(l.offerId),
+                  }
+                : l,
+            ),
+          }
+        : b,
+    );
     this.audit(next, ctx, "basket.setQuantity", "BasketLine", lineId, { quantity });
     this.commit(next);
   }
 
   removeBasketLine(ctx: SessionContext, lineId: BasketLineId): void {
-    if (!canManageBasket(ctx.membership, this.state.basket.orgId)) {
+    if (!canManageBasket(ctx.membership, ctx.membership.orgId)) {
       throw forbiddenError("Недостаточно прав для изменения корзины.");
     }
-    if (!this.state.basket.lines.some((l) => l.id === lineId)) {
+    const basket = this.findBasket(this.state, ctx.membership.orgId);
+    if (!basket || !basket.lines.some((l) => l.id === lineId)) {
       throw notFoundError("Строка корзины не найдена.");
     }
     const next = cloneState(this.state);
-    next.basket = {
-      ...next.basket,
-      lines: next.basket.lines.filter((l) => l.id !== lineId),
-    };
+    next.baskets = next.baskets.map((b) =>
+      b.orgId === ctx.membership.orgId
+        ? { ...b, lines: b.lines.filter((l) => l.id !== lineId) }
+        : b,
+    );
     this.audit(next, ctx, "basket.remove", "BasketLine", lineId);
     this.commit(next);
   }
@@ -450,7 +497,7 @@ export class Repository {
    * one (safe for double-click / retry after an unclear timeout).
    */
   submitBasket(ctx: SessionContext): { procurementId: string; suborderIds: string[] } {
-    if (!canManageProcurement(ctx.membership, this.state.basket.orgId)) {
+    if (!canManageProcurement(ctx.membership, ctx.membership.orgId)) {
       throw forbiddenError("Недостаточно прав для отправки этой корзины.");
     }
     // Idempotent replay: return the prior result for the same key BEFORE any
@@ -477,7 +524,8 @@ export class Repository {
     if (!location) {
       throw forbiddenError("Выберите доступную точку доставки перед отправкой закупки.");
     }
-    if (this.state.basket.lines.length === 0) {
+    const ownBasket = this.findBasket(this.state, ctx.membership.orgId);
+    if (!ownBasket || ownBasket.lines.length === 0) {
       throw validationError("Корзина пуста.");
     }
 
@@ -487,7 +535,7 @@ export class Repository {
     const procurementId = this.nextId("proc");
 
     const bySupplier = new Map<string, BasketLine[]>();
-    for (const line of this.state.basket.lines) {
+    for (const line of ownBasket.lines) {
       const arr = bySupplier.get(line.supplierId) ?? [];
       arr.push(line);
       bySupplier.set(line.supplierId, arr);
@@ -552,7 +600,7 @@ export class Repository {
         id: suborderId,
         procurementId: asProcurementId(procurementId),
         supplierId: supplier.id,
-        orgId: this.state.basket.orgId,
+        orgId: ctx.membership.orgId,
         locationId: location.id,
         status: "awaiting_supplier",
         fulfillmentStatus: "not_started",
@@ -578,7 +626,7 @@ export class Repository {
     // Persist the parent together with its suborders in one commit (atomic).
     const parent: ParentProcurement = {
       id: asProcurementId(procurementId),
-      orgId: this.state.basket.orgId,
+      orgId: ctx.membership.orgId,
       locationId: location.id,
       createdBy: ctx.membership.userId,
       status: "awaiting_supplier",
@@ -587,7 +635,9 @@ export class Repository {
       reorderOfProcurementId: null,
     };
     next.parents = [...next.parents, parent];
-    next.basket = { ...next.basket, lines: remainingLines };
+    next.baskets = next.baskets.map((b) =>
+      b.orgId === ctx.membership.orgId ? { ...b, lines: remainingLines } : b,
+    );
 
     const metadata: Record<string, string | number | boolean> = {
       suborders: suborderIds.length,
@@ -623,7 +673,8 @@ export class Repository {
     const location = this.getBasketLocation(ctx);
     const suppliers = this.suppliersById();
     const bySupplier = new Map<string, BasketLine[]>();
-    for (const line of this.state.basket.lines) {
+    const ownBasket = this.findBasket(this.state, ctx.membership.orgId);
+    for (const line of ownBasket?.lines ?? []) {
       const arr = bySupplier.get(line.supplierId) ?? [];
       arr.push(line);
       bySupplier.set(line.supplierId, arr);
@@ -1075,10 +1126,13 @@ export class Repository {
       .filter((l): l is Extract<typeof l, { kind: "carried" }> => l.kind === "carried")
       .map((l) => l.line);
     const carriedOfferIds = new Set(carriedLines.map((l) => l.offerId as string));
-    const preserved = next.basket.lines.filter(
-      (l) => !carriedOfferIds.has(l.offerId as string),
-    );
-    next.basket = { ...next.basket, lines: [...preserved, ...carriedLines] };
+    const target = this.findBasket(next, ctx.membership.orgId);
+    const base: Basket = target ?? this.emptyBasketFor(ctx.membership.orgId);
+    const preserved = base.lines.filter((l) => !carriedOfferIds.has(l.offerId as string));
+    const updated: Basket = { ...base, lines: [...preserved, ...carriedLines] };
+    next.baskets = target
+      ? next.baskets.map((b) => (b.orgId === ctx.membership.orgId ? updated : b))
+      : [...next.baskets, updated];
 
     const metadata: Record<string, string | number | boolean> = {
       carried: draft.summary.carried,

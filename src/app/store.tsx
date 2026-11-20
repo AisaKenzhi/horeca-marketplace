@@ -22,7 +22,7 @@ import {
   type SessionContext,
 } from "@/data/repository";
 import {
-  basket as seedBasket,
+  baskets as seedBaskets,
   buyerLocations,
   buyerLists,
   memberships,
@@ -68,7 +68,7 @@ export function createRepository(): Repository {
       products,
       offers,
       buyerLists,
-      basket: seedBasket,
+      baskets: seedBaskets,
       notifications,
     }),
   );
