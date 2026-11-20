@@ -59,6 +59,7 @@ import {
   canEditSupplierCatalog,
   canManageBasket,
   canManageProcurement,
+  canModerateContent,
   canRecordReceiving,
   canRespondToSuborder,
   canViewParentProcurement,
@@ -1460,7 +1461,13 @@ export class Repository {
   /* ------------------------------ Operator ----------------------------- */
 
   /** Operator can only view the synthetic demo queue. No mutations granted. */
-  demoModerationQueue(): readonly SupplierProfile[] {
+  /**
+   * Read-only demo moderation queue. Gated here, not only in the UI: a caller
+   * without moderator rights gets an empty queue rather than the full supplier
+   * set (the UI is not a security boundary).
+   */
+  demoModerationQueue(ctx: SessionContext): readonly SupplierProfile[] {
+    if (!canModerateContent(ctx.membership)) return [];
     return this.state.suppliers.map((s) => s);
   }
 
