@@ -110,17 +110,12 @@ a production release.
 
 | Field          | Value                                                                            |
 | -------------- | -------------------------------------------------------------------------------- |
-| Commit         | `0151a21` (post-hardening `main`; local synthetic demo)                          |
+| Commit         | the SHA of this branch's head (recorded in the PR description)                   |
 | Artifact       | `dist/` from `npm run build`                                                     |
 | Target         | a static host, owner's choice; no domain purchased                               |
 | Operating mode | **public read-only synthetic demo** — no accounts, no orders, no data collection |
 | Rollback       | delete the static deployment; nothing persists server-side                       |
 | Approve by     | owner, explicitly, naming commit + target + mode                                 |
-
-Verified at this commit: `npm run verify:full` (lint 0 errors, typecheck, 175
-tests, coverage 87.14 / 76.39 / 91.63 / 89.86, build) and Playwright E2E
-(20 scenarios × desktop + mobile, incl. the axe WCAG 2.1 A/AA gate). `npm audit`
-= 0. These are **local, synthetic-data** results only.
 
 ## 6. What must be true before a real launch (not just a demo)
 
