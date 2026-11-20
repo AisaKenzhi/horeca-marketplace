@@ -219,7 +219,14 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
               className="btn btn-ghost"
               disabled={busy}
               onClick={() =>
-                guard(() => repo.advanceFulfillment(session, suborder.id, "packing"))
+                guard(() =>
+                  repo.advanceFulfillment(
+                    session,
+                    suborder.id,
+                    "packing",
+                    suborder.version,
+                  ),
+                )
               }
             >
               Начать сборку
@@ -232,7 +239,12 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
               disabled={busy}
               onClick={() =>
                 guard(() =>
-                  repo.advanceFulfillment(session, suborder.id, "ready_for_handover"),
+                  repo.advanceFulfillment(
+                    session,
+                    suborder.id,
+                    "ready_for_handover",
+                    suborder.version,
+                  ),
                 )
               }
             >
@@ -245,7 +257,14 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
               className="btn btn-ghost"
               disabled={busy}
               onClick={() =>
-                guard(() => repo.advanceFulfillment(session, suborder.id, "shipped"))
+                guard(() =>
+                  repo.advanceFulfillment(
+                    session,
+                    suborder.id,
+                    "shipped",
+                    suborder.version,
+                  ),
+                )
               }
             >
               Отгрузить

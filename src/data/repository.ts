@@ -945,9 +945,15 @@ export class Repository {
     ctx: SessionContext,
     suborderId: SuborderId,
     to: FulfillmentStatus,
+    expectedVersion?: number,
   ): void {
     const suborder = this.state.suborders.find((s) => s.id === suborderId);
     if (!suborder) throw notFoundError("Подзаказ не найден.");
+    if (expectedVersion !== undefined && expectedVersion !== suborder.version) {
+      throw conflictError(
+        "Подзаказ изменился с момента открытия. Перечитайте текущую версию.",
+      );
+    }
     if (to === "receiving" || to === "completed") {
       if (!canRecordReceiving(ctx.membership, suborder.orgId)) {
         throw forbiddenError("Нет прав фиксировать приёмку.");
@@ -996,11 +1002,17 @@ export class Repository {
     suborderId: SuborderId,
     lines: ReceiptRecord["lines"],
     discrepancies: ReceiptRecord["notedDiscrepancies"],
+    expectedVersion?: number,
   ): void {
     const suborder = this.state.suborders.find((s) => s.id === suborderId);
     if (!suborder) throw notFoundError("Подзаказ не найден.");
     if (!canRecordReceiving(ctx.membership, suborder.orgId)) {
       throw forbiddenError("Нет прав фиксировать приёмку.");
+    }
+    if (expectedVersion !== undefined && expectedVersion !== suborder.version) {
+      throw conflictError(
+        "Подзаказ изменился с момента открытия. Перечитайте текущую версию.",
+      );
     }
     // A receipt must belong to a suborder that is in the receiving stage.
     if (suborder.fulfillmentStatus !== "receiving") {
@@ -1013,6 +1025,11 @@ export class Repository {
     }
     const next = cloneState(this.state);
     const now = asIso(ctx.nowIso);
+    // Recording a receipt is a write to the suborder: bump its version so the
+    // optimistic-concurrency check is meaningful against a second receiver.
+    next.suborders = next.suborders.map((s) =>
+      s.id === suborderId ? { ...s, updatedAt: now, version: s.version + 1 } : s,
+    );
     next.receipts = [
       ...next.receipts,
       {
@@ -1184,7 +1201,7 @@ export class Repository {
           a.metadata.idempotencyKey === ctx.idempotencyKey,
       );
       if (prior) {
-        const job = this.state.importJobs.find((j) => j.supplierId === supplierId);
+        const job = this.state.importJobs.find((j) => j.id === prior.entityId);
         return { jobId: prior.entityId, appliedOfferIds: job?.appliedOfferIds ?? [] };
       }
     }

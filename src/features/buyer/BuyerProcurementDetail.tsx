@@ -62,6 +62,7 @@ function ReceivingForm({ suborder }: { suborder: SupplierSuborder }): ReactNode 
               receivedQuantity: received[l.offerId] ?? l.quantity,
             })),
             reasons,
+            suborder.version,
           );
           setDone(true);
         } catch (err) {

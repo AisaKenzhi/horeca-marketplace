@@ -355,6 +355,44 @@ describe("repository: fulfillment and receiving", () => {
     expect(s.fulfillmentStatus).toBe("receiving");
   });
 
+  it("rejects a fulfillment transition from a stale expected version", () => {
+    const repo = makeRepo();
+    submitReadyBasket(repo);
+    const suborder = repo.getState().suborders.find((s) => s.supplierId === "sup-alpha")!;
+    repo.confirmSuborderNoChange(supplierAlpha, suborder.id);
+    const v = repo.getState().suborders.find((x) => x.id === suborder.id)!.version;
+    repo.advanceFulfillment(supplierAlpha, suborder.id, "packing", v);
+    // Re-using the now-stale version must be refused, not silently applied.
+    expect(() =>
+      repo.advanceFulfillment(supplierAlpha, suborder.id, "ready_for_handover", v),
+    ).toThrow(/изменился/);
+  });
+
+  it("rejects a receipt from a stale expected version and bumps the version on write", () => {
+    const repo = makeRepo();
+    submitReadyBasket(repo);
+    const suborder = repo.getState().suborders.find((s) => s.supplierId === "sup-alpha")!;
+    repo.confirmSuborderNoChange(supplierAlpha, suborder.id);
+    repo.advanceFulfillment(supplierAlpha, suborder.id, "packing");
+    repo.advanceFulfillment(supplierAlpha, suborder.id, "ready_for_handover");
+    repo.advanceFulfillment(supplierAlpha, suborder.id, "shipped");
+    repo.advanceFulfillment(supplierAlpha, suborder.id, "delivered");
+    repo.advanceFulfillment(buyer, suborder.id, "receiving");
+    const v = repo.getState().suborders.find((x) => x.id === suborder.id)!.version;
+    repo.recordReceipt(
+      buyer,
+      suborder.id,
+      [{ offerId: "off-alpha-flour" as never, expectedQuantity: 2, receivedQuantity: 2 }],
+      [],
+      v,
+    );
+    // The suborder version moved, so the same version is now stale.
+    expect(repo.getState().suborders.find((x) => x.id === suborder.id)!.version).toBe(
+      v + 1,
+    );
+    expect(() => repo.recordReceipt(buyer, suborder.id, [], [], v)).toThrow(/изменился/);
+  });
+
   it("refuses receiving from a viewer", () => {
     const repo = makeRepo();
     submitReadyBasket(repo);
