@@ -67,6 +67,22 @@ export function decideOnRevision(args: {
   const target = outcome === "accepted" ? "confirmed" : "rejected";
   assertSuborderTransition(suborder.status, target);
 
+  // Accepting a revision is what BINDS its AFTER values. Refuse to confirm if
+  // any line cannot produce a complete snapshot (e.g. a substitution recorded
+  // with no price on either side): we must never invent a binding price. An
+  // honest rejection is better than a fabricated 0 ₸ confirmed line.
+  if (outcome === "accepted") {
+    for (const l of revision.lines) {
+      const price = l.priceAfter ?? l.priceBefore;
+      const quantity = l.quantityAfter ?? l.quantityBefore;
+      if (price === null || quantity === null || quantity <= 0) {
+        throw new Error(
+          "Нельзя подтвердить изменение без известной цены и количества по позиции.",
+        );
+      }
+    }
+  }
+
   const decision: BuyerDecision = {
     id: asDecisionId(args.newId?.() ?? `decision-${revision.id}-${outcome}`),
     suborderId: suborder.id,
@@ -92,18 +108,33 @@ export function decideOnRevision(args: {
   };
 }
 
-/** Build immutable line snapshots from an accepted revision (uses AFTER values). */
+/**
+ * Build immutable line snapshots from an accepted revision (uses AFTER values).
+ *
+ * Never fabricates a value: a line with no known price or quantity is a bug and
+ * throws, rather than binding a silent `0 ₸` line. `decideOnRevision` rejects
+ * such a revision before confirmation, so this is a defence in depth.
+ */
 export function snapshotFromRevision(
   revision: SuborderRevision,
 ): readonly SuborderLineSnapshot[] {
-  return revision.lines.map((l) => ({
-    id: `snapshot-${revision.id}-${l.offerId}` as SuborderLineSnapshot["id"],
-    offerId: l.offerId,
-    title: l.sellUnitLabelAfter ?? l.sellUnitLabelBefore ?? "—",
-    quantity: l.quantityAfter ?? l.quantityBefore ?? 0,
-    pricePerSellUnit: l.priceAfter ?? l.priceBefore ?? { amount: 0, currency: "KZT" },
-    sellUnitLabel: l.sellUnitLabelAfter ?? l.sellUnitLabelBefore ?? "—",
-  }));
+  return revision.lines.map((l) => {
+    const price = l.priceAfter ?? l.priceBefore;
+    const quantity = l.quantityAfter ?? l.quantityBefore;
+    if (price === null || quantity === null) {
+      throw new Error(
+        "Невозможно построить подтверждённую строку без цены и количества.",
+      );
+    }
+    return {
+      id: `snapshot-${revision.id}-${l.offerId}` as SuborderLineSnapshot["id"],
+      offerId: l.offerId,
+      title: l.sellUnitLabelAfter ?? l.sellUnitLabelBefore ?? "—",
+      quantity,
+      pricePerSellUnit: price,
+      sellUnitLabel: l.sellUnitLabelAfter ?? l.sellUnitLabelBefore ?? "—",
+    };
+  });
 }
 
 /**

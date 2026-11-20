@@ -29,6 +29,15 @@ describe("suborder agreement lifecycle", () => {
 
   it("treats terminal states as terminal", () => {
     for (const terminal of ["rejected", "expired", "cancelled"] as SuborderStatus[]) {
+      // No forward target is reachable from a terminal state.
+      for (const to of [
+        "submitted",
+        "awaiting_supplier",
+        "confirmed",
+        "cancelled",
+      ] as SuborderStatus[]) {
+        expect(canTransitionSuborder(terminal, to)).toBe(false);
+      }
       expect(canTransitionSuborder(terminal, "confirmed")).toBe(false);
     }
   });
@@ -67,7 +76,7 @@ describe("fulfillment lifecycle", () => {
 describe("payment lifecycle (P0)", () => {
   it("refuses to mark payment as processed", () => {
     expect(canTransitionPayment("not_processed", "not_processed")).toBe(true);
-    expect(canTransitionPayment("not_processed", "not_processed")).toBe(true);
+    expect(canTransitionPayment("not_processed", "not_applicable_demo")).toBe(true);
     // A future "paid" status is not modelled and must be denied.
     expect(canTransitionPayment("not_processed", "paid" as never)).toBe(false);
   });
