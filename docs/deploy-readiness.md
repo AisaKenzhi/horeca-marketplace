@@ -110,15 +110,15 @@ a production release.
 
 | Field          | Value                                                                            |
 | -------------- | -------------------------------------------------------------------------------- |
-| Commit         | `4a1a9ad` (post-hardening `main`; local synthetic demo)                          |
+| Commit         | `182c258` (post-hardening `main`; local synthetic demo)                          |
 | Artifact       | `dist/` from `npm run build`                                                     |
 | Target         | a static host, owner's choice; no domain purchased                               |
 | Operating mode | **public read-only synthetic demo** — no accounts, no orders, no data collection |
 | Rollback       | delete the static deployment; nothing persists server-side                       |
 | Approve by     | owner, explicitly, naming commit + target + mode                                 |
 
-Verified at this commit: `npm run verify:full` (lint 0 errors, typecheck, 178
-tests, coverage 87.22 / 77.02 / 92.36 / 89.79, build) and Playwright E2E
+Verified at this commit: `npm run verify:full` (lint 0 errors, typecheck, 183
+tests, coverage 87.37 / 77.65 / 92.36 / 89.94, build) and Playwright E2E
 (20 scenarios × desktop + mobile, incl. the axe WCAG 2.1 A/AA gate). `npm audit`
 = 0. These are **local, synthetic-data** results only.
 
