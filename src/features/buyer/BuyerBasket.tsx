@@ -39,7 +39,7 @@ export function BuyerBasket(): ReactNode {
         ...session,
         idempotencyKey: `submit-${session.membership.id}-${session.nowIso}`,
       });
-      navigate(`/procurement/${procurementId}`);
+      void navigate(`/procurement/${procurementId}`);
     } catch (e) {
       setError(toSafeError(e).message);
       setSubmitting(false);

@@ -1,8 +1,8 @@
 # Dependency hygiene (P0, local)
 
 This records the dependency posture of the prototype. It is a **local** analysis
-only; nothing here upgrades a major version, changes the lockfile policy, or
-touches a remote.
+only. Dependency changes are made as planned, tested groups; `npm audit fix
+--force` is never used.
 
 ## Policy
 
@@ -14,34 +14,40 @@ touches a remote.
 - A breaking major bump is out of scope for the P0 hardening pass unless it is
   required to close a defect we can actually reach at runtime.
 
-## Current advisories (tracked, deliberately deferred)
+## Runtime advisories — resolved
 
-`npm audit` reports advisories whose **only** fix is a breaking major upgrade:
+`npm audit --omit=dev` now reports **0 vulnerabilities**. The two runtime
+advisories were cleared:
 
-| Package                                                                                   | Severity     | Scope          | Fix offered          | Why deferred now                                                                  |
-| ----------------------------------------------------------------------------------------- | ------------ | -------------- | -------------------- | --------------------------------------------------------------------------------- |
-| `zod`                                                                                     | high         | runtime dep    | `zod@4.6.7` (major)  | Major rewrite; the prototype barely uses `zod` and never on untrusted bulk input. |
-| `react-router-dom`                                                                        | moderate     | runtime dep    | `react-router-dom@7` | Major router migration; would touch every screen and the E2E flow.                |
-| `react-router`                                                                            | moderate     | transitive     | via router-dom 7     | Follows the router upgrade above.                                                 |
-| `vitest`                                                                                  | critical     | dev-only       | `vitest@5` (major)   | Test tool only; never shipped to a user. No runtime exposure.                     |
-| `@vitest/coverage-v8`                                                                     | critical     | dev-only       | v5 (major)           | Test tool only.                                                                   |
-| `vite`                                                                                    | high         | dev/build tool | `vite@8` (major)     | Build tool only; the built bundle does not include Vite.                          |
-| `esbuild`, `tinypool`, `glob`, `minimatch`, `@vitest/mocker`, `vite-node`, `test-exclude` | low–critical | dev-only       | via the majors above | Transitive dev-tool dependencies; no user-facing surface.                         |
+- **`zod` (high)** — the package was declared but never imported anywhere in
+  `src/`, `tests/`, or `e2e/`. It was **removed** rather than major-upgraded:
+  shipping an unused dependency with a known high advisory has no upside.
+- **`react-router-dom` (moderate, + transitive `react-router`)** — upgraded
+  `6.30.6 → 7.18.6`. The only code impact was that `useNavigate()` now returns a
+  promise; the single call site is marked with `void`. The v7 future-flag
+  warnings in tests are gone. Full gate (`verify:full`) and E2E stayed green.
 
-Notes:
+## Dev-toolchain advisories (tracked, deliberately deferred)
 
-- The **critical/high** entries are all in the **dev/test toolchain** (vitest,
-  coverage, vite, esbuild) and never reach a user's browser.
-- The two **runtime** advisories (`zod`, `react-router-dom`) are moderate/high and
-  require breaking upgrades. A follow-up task should plan the router 7 and zod 4
-  migrations together, behind the full test + E2E gate.
+The remaining `npm audit` entries are all in the **dev/build toolchain** and
+never reach a user's browser. Their only fixes are breaking majors:
 
-## What is safe to do, and what was done
+| Package                                                                                   | Severity     | Scope          | Fix offered          | Why deferred now                                       |
+| ----------------------------------------------------------------------------------------- | ------------ | -------------- | -------------------- | ------------------------------------------------------ |
+| `vitest`                                                                                  | critical     | dev-only       | `vitest@5` (major)   | Test tool only; never shipped to a user.               |
+| `@vitest/coverage-v8`                                                                     | critical     | dev-only       | v5 (major)           | Test tool only.                                        |
+| `vite`                                                                                    | high         | dev/build tool | `vite@8` (major)     | Build tool only; the built bundle does not include it. |
+| `esbuild`, `tinypool`, `glob`, `minimatch`, `@vitest/mocker`, `vite-node`, `test-exclude` | low–critical | dev-only       | via the majors above | Transitive dev-tool dependencies; no user surface.     |
 
-- `npm audit` was run (read-only) and this document was written. No lockfile was
-  modified, no major version was changed.
-- The full test suite and E2E must stay green before any future dependency
-  change; `npm run verify:full` runs format, lint, typecheck, coverage and build.
+A follow-up task can upgrade the dev toolchain as one tested group if desired;
+it is not a security exposure.
+
+## What was done
+
+- `zod` removed (unused); `react-router-dom` upgraded to v7; `npm audit --omit=dev`
+  is clean.
+- The full gate is `npm run verify:full` (format, lint, typecheck, coverage,
+  build); E2E is `npm run e2e`. Both stayed green across the upgrade.
 
 ## Licenses
 
