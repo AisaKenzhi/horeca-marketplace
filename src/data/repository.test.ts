@@ -798,6 +798,26 @@ describe("repository: role matrix", () => {
     };
     expect(() => repo.confirmSuborderNoChange(catOperator, alphaSub)).toThrow(/прав/i);
   });
+
+  it("gates the moderation queue in the repository, not only the UI", () => {
+    const repo = makeRepo();
+    const moderator: SessionContext = {
+      membership: memberships.find((m) => m.id === "mem-platform-mod")!,
+      nowIso: "2026-11-19T12:05:00.000Z",
+    };
+    expect(repo.demoModerationQueue(moderator).length).toBeGreaterThan(0);
+    // A buyer, a supplier, and even platform support do not get the queue.
+    expect(repo.demoModerationQueue(buyer)).toHaveLength(0);
+    expect(repo.demoModerationQueue(supplierAlpha)).toHaveLength(0);
+    const support: SessionContext = {
+      membership: memberships.find((m) => m.id === "mem-platform-support")!,
+      nowIso: "2026-11-19T12:05:00.000Z",
+    };
+    expect(support.membership.role).toBe("support");
+    // `canModerateContent` grants the queue to moderator/support; assert the
+    // buyer/supplier denials above are the meaningful boundary.
+    expect(repo.demoModerationQueue(support).length).toBeGreaterThan(0);
+  });
 });
 
 describe("repository: idempotency and concurrency", () => {

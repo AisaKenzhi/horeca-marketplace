@@ -10,7 +10,7 @@ import { canModerateContent } from "@/domain/authorization";
  * user roles here; that constraint is enforced in the domain layer too.
  */
 export function OperatorCockpit(): ReactNode {
-  const { state, membership, messages, repo } = useApp();
+  const { state, membership, messages, repo, session } = useApp();
 
   if (!canModerateContent(membership)) {
     return (
@@ -22,7 +22,7 @@ export function OperatorCockpit(): ReactNode {
     );
   }
 
-  const queue = repo.demoModerationQueue();
+  const queue = repo.demoModerationQueue(session);
 
   return (
     <div className="stack">
