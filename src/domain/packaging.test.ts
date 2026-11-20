@@ -32,6 +32,26 @@ describe("packaging", () => {
     expect(isValidPackaging({ ...box12x05, orderStep: 0 })).toBe(false);
   });
 
+  it("rejects a non-finite pack amount (Infinity is not a valid size)", () => {
+    const nonFinite: PackagingSpec = {
+      ...box12x05,
+      sellUnit: {
+        ...box12x05.sellUnit,
+        packSize: { amount: Number.POSITIVE_INFINITY, baseUnit: "l" },
+      },
+    };
+    expect(isValidPackaging(nonFinite)).toBe(false);
+    expect(
+      isValidPackaging({
+        ...nonFinite,
+        sellUnit: {
+          ...nonFinite.sellUnit,
+          packSize: { amount: Number.NaN, baseUnit: "l" },
+        },
+      }),
+    ).toBe(false);
+  });
+
   describe("checkOrderQuantity", () => {
     it("rejects non-positive and non-integer quantities", () => {
       expect(checkOrderQuantity(0, box12x05).ok).toBe(false);
@@ -63,6 +83,33 @@ describe("packaging", () => {
         expect(u.baseUnit).toBe("l");
         expect(u.perBaseUnitMinor).toBe(1000);
         expect(u.exactlyDivisible).toBe(true);
+      }
+    });
+
+    it("does not mislabel an exact ratio as inexact because of float error", () => {
+      // 3 KZT over 3 × 0,1 л = 1 ZKT/L exactly, but 3 * 0.1 == 0.30000000000000004
+      // so a naive Number.isInteger(3 / 0.30000000000000004) is false.
+      const u = unitPrice(3, {
+        label: "фл. 0,1 л",
+        unitsPerSellUnit: 3,
+        packSize: { amount: 0.1, baseUnit: "l" },
+      });
+      expect(u.comparable).toBe(true);
+      if (u.comparable) {
+        expect(u.perBaseUnitMinor).toBe(10);
+        expect(u.exactlyDivisible).toBe(true);
+      }
+    });
+
+    it("still reports a genuinely inexact ratio as inexact", () => {
+      const u = unitPrice(10, {
+        label: "фл. 0,1 л",
+        unitsPerSellUnit: 3,
+        packSize: { amount: 0.1, baseUnit: "l" },
+      });
+      expect(u.comparable).toBe(true);
+      if (u.comparable) {
+        expect(u.exactlyDivisible).toBe(false);
       }
     });
 
