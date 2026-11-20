@@ -108,14 +108,25 @@ VERIFIED = cannot be checked here (no environment/access).
 An RC is provided so the owner can decide on a **demo** publish. It is **not**
 a production release.
 
-| Field          | Value                                                                                                                        |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Commit         | `fae5165` (post-hardening `main`; local synthetic demo)                                                                      |
-| Artifact       | `dist/` from `npm run build`                                                                                                 |
-| Target         | a static host, owner's choice; no domain purchased; a reversible local serve is available (see `deploy/serve-local-demo.sh`) |
-| Operating mode | **public read-only synthetic demo** — no accounts, no orders, no data collection                                             |
-| Rollback       | delete the static deployment; nothing persists server-side                                                                   |
-| Approve by     | owner, explicitly, naming commit + target + mode                                                                             |
+| Field          | Value                                                                                                |
+| -------------- | ---------------------------------------------------------------------------------------------------- |
+| Commit         | `da8f42a` (post-hardening `main`; local synthetic demo)                                              |
+| Artifact       | `dist/` from `npm run build`                                                                         |
+| Target         | a static host, owner's choice; a **live public demo** is served on the owner's subdomain (see below) |
+| Operating mode | **public read-only synthetic demo** — no accounts, no orders, no data collection                     |
+| Rollback       | delete the static deployment; nothing persists server-side                                           |
+| Approve by     | owner, explicitly, naming commit + target + mode                                                     |
+
+**Live demo (this host).** The owner pointed `demo.spokogastro.bond` at this
+machine and it now serves the static demo over HTTPS with a free Let's Encrypt
+certificate, via `deploy/serve-domain-demo.sh`. The vhost matches only that
+hostname, so the pre-existing, unrelated production site on the same host is
+untouched. Verified from the public internet: `GET https://demo.spokogastro.bond/`
+and SPA deep links return 200 with `X-Robots-Tag: noindex, nofollow`; 18/18
+Playwright buyer-flow scenarios (desktop + mobile) and the axe WCAG 2.1 A/AA gate
+pass **against the public URL**. Still a demo: synthetic data, in-memory state,
+no backend, no real orders. A local, reversible serve is also available via
+`deploy/serve-local-demo.sh`.
 
 Verified at this commit: `npm run verify:full` (lint 0 errors, typecheck, 183
 tests, coverage 87.37 / 77.65 / 92.36 / 89.94, build) and Playwright E2E
