@@ -75,3 +75,33 @@ On this particular host only ports 22/80/443 are reachable from the internet, an
 80/443 already serve an unrelated production site, so a public demo here would
 require either a firewall change or a DNS record. That decision belongs to the
 owner; the script stops at a local, reversible serve.
+
+## Option F — publish under a hostname with free TLS (this host)
+
+`deploy/serve-domain-demo.sh` serves the demo under **your** subdomain on ports
+80/443 with a free Let's Encrypt certificate, **without touching any other vhost
+or certificate** on the host (it matches your `server_name` only):
+
+```bash
+# after you add:  demo.spokogastro.bond  A  34.116.173.67
+./deploy/serve-domain-demo.sh demo.spokogastro.bond you@example.com
+```
+
+Prerequisites (owner action):
+
+1. Add a DNS **A** record: `<sub>.spokogastro.bond -> 34.116.173.67`.
+   If the provider proxies (Cloudflare orange cloud), set it **DNS-only** so the
+   HTTP-01 challenge can be served.
+2. Ports 80 and 443 must be reachable from the internet (they already are here,
+   because the existing site uses them).
+
+The script builds `dist/`, installs an isolated vhost, runs `certbot --nginx`
+(which edits only the matching server block), and verifies HTTPS. Undo:
+
+```bash
+sudo certbot delete --cert-name <host>
+sudo rm /etc/nginx/sites-enabled/horeca-demo-domain && sudo systemctl reload nginx
+sudo rm -rf /var/www/horeca-demo
+```
+
+It is still a **demo**: `noindex`, synthetic data, no backend, no real orders.
