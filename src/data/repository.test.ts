@@ -111,6 +111,20 @@ describe("repository: submit basket -> supplier suborders", () => {
     expect(() => repo.submitBasket(buyer)).toThrow(/пуста/i);
   });
 
+  it("re-baselines the price snapshot on a deliberate quantity change (documented)", () => {
+    // Deliberate, pinned behaviour: editing the quantity is a fresh act of
+    // intent, so the line's snapshot is re-baselined to the CURRENT live price.
+    // The separate freshness badge still flags a stale/unknown price. If this
+    // product choice is reversed, this test must change with it.
+    const repo = makeRepo();
+    const line = cafeBasket(repo).lines.find((l) => l.offerId === "off-alpha-flour")!;
+    const live = repo.getState().offers.find((o) => o.id === "off-alpha-flour")!
+      .pricePerSellUnit.value!.amount;
+    repo.setBasketLineQuantity(buyer, line.id, line.quantity + 1);
+    const after = cafeBasket(repo).lines.find((l) => l.id === line.id)!;
+    expect(after.addedAtPriceSnapshot?.amount).toBe(live);
+  });
+
   it("audits the submission without storing sensitive values", () => {
     const repo = makeRepo();
     repo.submitBasket(buyer);
