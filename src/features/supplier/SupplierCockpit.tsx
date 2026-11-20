@@ -211,6 +211,23 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
               >
                 {messages.supplier.proposeChange}
               </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={busy}
+                onClick={() =>
+                  guard(() =>
+                    repo.cancelSuborder(
+                      session,
+                      suborder.id,
+                      "Отменено поставщиком (демо)",
+                      suborder.version,
+                    ),
+                  )
+                }
+              >
+                Отменить этот подзаказ
+              </button>
             </>
           ) : null}
           {suborder.status === "confirmed" ? (

@@ -130,6 +130,29 @@ export function canModerateContent(m: Membership): boolean {
 }
 
 /**
+ * Who may cancel a suborder branch, and only that branch.
+ *
+ * - The owning buyer org (owner/admin/buyer) may cancel any branch it owns.
+ * - The exact supplier of the branch (owner/admin/order_operator) may cancel
+ *   its OWN branch (e.g. it can no longer fulfil), never a sibling's.
+ * - A foreign supplier, a viewer/receiver, or a platform operator may NOT.
+ *
+ * Cancellation never applies to a terminal branch; the caller checks the
+ * state-machine transition separately so the reason stays precise.
+ */
+export function canCancelSuborder(m: Membership, suborder: SupplierSuborder): boolean {
+  if (isBuyerSide(m)) {
+    return m.orgId === suborder.orgId && canManageProcurement(m, suborder.orgId);
+  }
+  if (isSupplierSide(m)) {
+    return (
+      m.supplierId === suborder.supplierId && canRespondToSuborder(m, suborder.supplierId)
+    );
+  }
+  return false;
+}
+
+/**
  * Operators must never change price/order terms on behalf of a party. Provided
  * as an explicit deny so a future feature cannot accidentally enable it.
  */

@@ -55,6 +55,7 @@ import {
 import { money, type Money } from "@/domain/money";
 import {
   canAccessLocation,
+  canCancelSuborder,
   canEditSupplierCatalog,
   canManageBasket,
   canManageProcurement,
@@ -796,24 +797,34 @@ export class Repository {
 
   /**
    * Aggregate the suborder states up to the parent. The parent NEVER hides a
-   * branch: it is confirmed only when all are confirmed, rejected when all are
-   * rejected, partially confirmed when some are confirmed and some are not, and
-   * otherwise stays in negotiation.
+   * branch: it is confirmed only when all are confirmed, rejected only when all
+   * are rejected, and shows a partial/negotiation state otherwise. The final
+   * `awaiting_supplier` fallback is reached ONLY when at least one child is
+   * genuinely still pending — a mix of terminal states never falls through to
+   * "awaiting supplier".
    */
   private recomputeParentStatus(next: RepositoryState, procurementId: string): void {
     const children = next.suborders.filter((s) => s.procurementId === procurementId);
     if (children.length === 0) return;
     const all = (pred: (s: SupplierSuborder) => boolean): boolean => children.every(pred);
     const any = (pred: (s: SupplierSuborder) => boolean): boolean => children.some(pred);
+    const isTerminal = (s: SupplierSuborder): boolean =>
+      s.status === "rejected" || s.status === "expired" || s.status === "cancelled";
+
     let status: ProcurementStatus;
     if (all((s) => s.status === "rejected")) status = "rejected";
     else if (all((s) => s.status === "confirmed")) status = "confirmed";
+    else if (all((s) => s.status === "cancelled")) status = "cancelled";
+    else if (all((s) => s.status === "expired")) status = "expired";
     else if (any((s) => s.status === "confirmed")) status = "partially_confirmed";
-    else if (children.every((s) => s.status === "expired")) status = "expired";
-    else if (children.every((s) => s.status === "cancelled")) status = "cancelled";
     else if (any((s) => s.status === "awaiting_buyer_decision"))
       status = "awaiting_buyer_decision";
-    else status = "awaiting_supplier";
+    else if (all(isTerminal)) {
+      // Every branch reached a terminal outcome, but they differ (e.g. one
+      // rejected, one cancelled). Never claim the parent is still awaiting a
+      // supplier; surface it as a mixed rejected outcome.
+      status = "rejected";
+    } else status = "awaiting_supplier";
     next.parents = next.parents.map((p) =>
       p.id === procurementId ? { ...p, status } : p,
     );
@@ -963,6 +974,62 @@ export class Repository {
     );
     this.recomputeParentStatus(next, suborder.procurementId);
     this.audit(next, ctx, "suborder.confirm_no_change", "SupplierSuborder", suborderId);
+    this.commit(next);
+  }
+
+  /**
+   * Cancel exactly ONE suborder branch.
+   *
+   * - Branch-scoped: siblings are never touched; the parent status is recomputed
+   *   from children afterwards.
+   * - Role-checked via `canCancelSuborder` (owning buyer org, or the branch's own
+   *   supplier). A foreign supplier/org, viewer or receiver is refused.
+   * - State-machine checked: only an allowed transition to `cancelled` proceeds.
+   * - Idempotent: cancelling an already-cancelled branch is a no-op (no second
+   *   audit event), so a retry after an unclear outcome is safe.
+   * - Optimistic concurrency: a stale `expectedVersion` is refused.
+   *
+   * NOTE (honesty): there is no reservation/inventory ledger in this prototype,
+   * so cancellation cannot release a real reservation. It records that fact in
+   * the audit metadata instead of pretending a reservation was released.
+   */
+  cancelSuborder(
+    ctx: SessionContext,
+    suborderId: SuborderId,
+    reasonDemo: string | null,
+    expectedVersion?: number,
+  ): void {
+    const suborder = this.state.suborders.find((s) => s.id === suborderId);
+    if (!suborder) throw notFoundError("Подзаказ не найден.");
+    if (!canCancelSuborder(ctx.membership, suborder)) {
+      throw forbiddenError("Нет прав отменить этот подзаказ.");
+    }
+    // Idempotent replay: an already-cancelled branch is a safe no-op.
+    if (suborder.status === "cancelled") return;
+    if (expectedVersion !== undefined && expectedVersion !== suborder.version) {
+      throw conflictError(
+        "Подзаказ изменился с момента открытия. Перечитайте текущую версию.",
+      );
+    }
+    if (!canTransitionSuborder(suborder.status, "cancelled")) {
+      throw conflictError(`Нельзя отменить подзаказ из статуса ${suborder.status}.`);
+    }
+    const next = cloneState(this.state);
+    const now = asIso(ctx.nowIso);
+    next.suborders = next.suborders.map((s) =>
+      s.id === suborderId
+        ? { ...s, status: "cancelled" as const, updatedAt: now, version: s.version + 1 }
+        : s,
+    );
+    this.recomputeParentStatus(next, suborder.procurementId);
+    const metadata: Record<string, string | number | boolean> = {
+      fromStatus: suborder.status,
+      // No inventory ledger exists here; a real backend must release its own
+      // reservation for this branch at this point.
+      reservationReleased: false,
+    };
+    if (reasonDemo !== null) metadata.reasonDemo = reasonDemo;
+    this.audit(next, ctx, "suborder.cancel", "SupplierSuborder", suborderId, metadata);
     this.commit(next);
   }
 

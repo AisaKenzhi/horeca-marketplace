@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canAccessBuyerOrg,
   canAccessSupplier,
+  canCancelSuborder,
   canEditSupplierCatalog,
   canManageProcurement,
   canModerateContent,
@@ -47,6 +48,17 @@ describe("buyer tenant isolation", () => {
     const receiver = { ...buyerOwner, role: "receiver" as const };
     expect(canRecordReceiving(receiver, demoOrg.id)).toBe(true);
     expect(canManageProcurement(receiver, demoOrg.id)).toBe(false);
+  });
+
+  it("scopes cancellation to the owning buyer org's manage roles only", () => {
+    const sub = makeSuborder({ orgId: demoOrg.id });
+    const receiver = { ...buyerOwner, role: "receiver" as const };
+    expect(canCancelSuborder(buyerOwner, sub)).toBe(true);
+    expect(canCancelSuborder(buyerViewer, sub)).toBe(false);
+    expect(canCancelSuborder(receiver, sub)).toBe(false);
+    // A foreign buyer org cannot cancel even with the exact suborder object.
+    const foreignBuyer = { ...buyerOwner, orgId: asOrgId("org-other") };
+    expect(canCancelSuborder(foreignBuyer, sub)).toBe(false);
   });
 
   it("filters out suborders from another buyer org", () => {
@@ -99,6 +111,19 @@ describe("supplier isolation", () => {
     const ordersOnly = { ...supplierAlphaOperator, role: "order_operator" as const };
     expect(canEditSupplierCatalog(ordersOnly, supplierAlpha.id)).toBe(false);
     expect(canRespondToSuborder(ordersOnly, supplierAlpha.id)).toBe(true);
+  });
+
+  it("scopes supplier cancellation to its own branch and order roles", () => {
+    const alphaSub = makeSuborder({ supplierId: supplierAlpha.id });
+    const betaSub = makeSuborder({ supplierId: supplierBeta.id });
+    expect(canCancelSuborder(supplierAlphaOperator, alphaSub)).toBe(true);
+    // A foreign branch is never cancellable, even by a valid order operator.
+    expect(canCancelSuborder(supplierAlphaOperator, betaSub)).toBe(false);
+    // A catalog operator cannot cancel orders.
+    const catalogOnly = { ...supplierAlphaOperator, role: "catalog_operator" as const };
+    expect(canCancelSuborder(catalogOnly, alphaSub)).toBe(false);
+    // Operators/platform staff never cancel on a party's behalf.
+    expect(canCancelSuborder(platformModerator, alphaSub)).toBe(false);
   });
 });
 

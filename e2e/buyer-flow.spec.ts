@@ -169,3 +169,17 @@ test("a foreign persona cannot open a guessed procurement id", async ({ page }) 
   await page.goto("/procurement/proc-does-not-exist");
   await expect(page.getByText(/не найдена|недоступна/i).first()).toBeVisible();
 });
+
+test("a buyer can cancel one suborder branch without touching the others", async ({
+  page,
+}) => {
+  await switchPersona(page, /владелец кафе/i);
+  await ensureBasketReady(page);
+  await page.getByRole("button", { name: "Отправить (демо)" }).click();
+  await navTo(page, "Закупки");
+  await page.getByRole("link", { name: "Открыть" }).first().click();
+  // The branch cancel control is offered and clearly scoped to one branch.
+  await expect(page.getByText(/только этот подзаказ/i).first()).toBeVisible();
+  await page.getByRole("button", { name: "Отменить этот подзаказ" }).click();
+  await expect(page.getByText(/Отменено/).first()).toBeVisible();
+});
