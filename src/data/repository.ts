@@ -305,6 +305,12 @@ export class Repository {
     return this.state.buyerLocations.filter((l) => l.orgId === orgId);
   }
 
+  /**
+   * Raw, UNSEALED parent lookup by id. This is an internal accessor (used by
+   * `getVisibleParent` and tests) and MUST NOT be handed a caller's id in UI or
+   * server code — use `getVisibleParent` for anything user-facing. A foreign id
+   * here would leak the parent object, so treat the argument as trusted.
+   */
   getParent(procurementId: string): ParentProcurement | undefined {
     return this.state.parents.find((p) => p.id === procurementId);
   }
@@ -329,6 +335,12 @@ export class Repository {
     return undefined;
   }
 
+  /**
+   * Raw, UNSEALED suborder list for a parent (all branches, all suppliers). An
+   * internal accessor used by `getVisibleParent`/`visibleSubordersOf` and tests.
+   * Never call this with a caller-supplied id in UI/server code; use
+   * `visibleSubordersOf` (tenant-checked) instead.
+   */
   subordersOf(procurementId: string): readonly SupplierSuborder[] {
     return this.state.suborders.filter((s) => s.procurementId === procurementId);
   }
@@ -1314,6 +1326,37 @@ export class Repository {
         );
       }
       seenSkus.add(row.sku);
+
+      // Boundary validation: never trust the caller's resolved numbers. A price,
+      // MOQ, step, units-per-sell-unit or pack amount that is not a positive
+      // integer would corrupt the catalog (a negative price, a zero MOQ). The
+      // domain resolver also checks these, but the repository is the boundary.
+      if (!Number.isInteger(row.pricePerSellUnit) || row.pricePerSellUnit <= 0) {
+        throw validationError(
+          `SKU ${row.sku}: цена должна быть целым положительным числом тенге.`,
+        );
+      }
+      if (!Number.isInteger(row.moq) || row.moq <= 0) {
+        throw validationError(`SKU ${row.sku}: MOQ должен быть целым положительным.`);
+      }
+      if (!Number.isInteger(row.orderStep) || row.orderStep <= 0) {
+        throw validationError(
+          `SKU ${row.sku}: шаг заказа должен быть целым положительным.`,
+        );
+      }
+      if (!Number.isInteger(row.unitsPerSellUnit) || row.unitsPerSellUnit <= 0) {
+        throw validationError(
+          `SKU ${row.sku}: число единиц в продаваемой единице должно быть целым положительным.`,
+        );
+      }
+      if (!Number.isFinite(row.packAmount) || row.packAmount <= 0) {
+        throw validationError(
+          `SKU ${row.sku}: размер фасовки должен быть положительным.`,
+        );
+      }
+      if (row.sku === "" || row.title === "") {
+        throw validationError(`Строка без SKU или названия отклонена целиком.`);
+      }
 
       const existing = next.offers.find(
         (o) => o.supplierId === supplierId && o.supplierSku === row.sku,

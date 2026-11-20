@@ -339,6 +339,29 @@ describe("repository: fulfillment and receiving", () => {
     expect(new Set(events.map((e) => e.idempotencyKey)).size).toBe(3);
   });
 
+  it("refuses a replayed fulfillment transition and does not bump the version", () => {
+    const repo = makeRepo();
+    submitReadyBasket(repo);
+    const suborder = repo.getState().suborders.find((s) => s.supplierId === "sup-alpha")!;
+    repo.confirmSuborderNoChange(supplierAlpha, suborder.id);
+    repo.advanceFulfillment(supplierAlpha, suborder.id, "packing");
+    const afterFirst = repo.getState().suborders.find((s) => s.id === suborder.id)!;
+    const version = afterFirst.version;
+    const eventCount = repo
+      .getState()
+      .fulfillments.filter((f) => f.suborderId === suborder.id).length;
+    // Re-applying the SAME transition is refused by the state machine (no
+    // packing -> packing), so no version bump and no extra event.
+    expect(() =>
+      repo.advanceFulfillment(supplierAlpha, suborder.id, "packing"),
+    ).toThrow();
+    const afterReplay = repo.getState().suborders.find((s) => s.id === suborder.id)!;
+    expect(afterReplay.version).toBe(version);
+    expect(
+      repo.getState().fulfillments.filter((f) => f.suborderId === suborder.id).length,
+    ).toBe(eventCount);
+  });
+
   it("records a receipt with discrepancies as observations, not a resolution", () => {
     const repo = makeRepo();
     submitReadyBasket(repo);
@@ -950,8 +973,17 @@ describe("repository: reorder persists a new draft", () => {
     const { alphaSub } = submittedProcurement(repo);
     const keyed: SessionContext = { ...buyer, idempotencyKey: "reorder-1" };
     repo.reorderIntoBasket(keyed, alphaSub);
+    const linesAfterFirst = cafeBasket(repo).lines.length;
+    const auditAfterFirst = repo
+      .getState()
+      .audit.filter((a) => a.action === "basket.reorder").length;
     const second = repo.reorderIntoBasket(keyed, alphaSub);
     expect(second.replayed).toBe(true);
+    // A replay must not add lines nor a second audit event.
+    expect(cafeBasket(repo).lines.length).toBe(linesAfterFirst);
+    expect(
+      repo.getState().audit.filter((a) => a.action === "basket.reorder").length,
+    ).toBe(auditAfterFirst);
   });
 });
 
@@ -1106,6 +1138,50 @@ describe("repository: real CSV catalog import", () => {
 
     const after = repo.getState().offers.find((o) => o.supplierSku === "ALF-FLOUR-5")!;
     expect(after.version).toBe(versionBefore);
+  });
+
+  it("rejects a negative or zero price passed straight to the boundary", () => {
+    const repo = makeRepo();
+    const catalogOperator: SessionContext = {
+      membership: memberships.find((m) => m.id === "mem-sup-alpha-cat")!,
+      nowIso: "2026-11-19T12:05:00.000Z",
+    };
+    const row = (price: number, moq = 1, step = 1) => ({
+      sku: "NEG-1",
+      title: "Плохая цена",
+      category: "Бакалея",
+      sellUnitLabel: "шт",
+      unitsPerSellUnit: 1,
+      packAmount: 1,
+      packBaseUnit: "kg" as const,
+      pricePerSellUnit: price,
+      moq,
+      orderStep: step,
+      availability: "in_stock" as const,
+    });
+    for (const bad of [0, -100]) {
+      expect(() =>
+        repo.applyCatalogImport(
+          catalogOperator,
+          asSupplierId("sup-alpha"),
+          [row(bad)],
+          { added: 1, updated: 0, errors: 0, skipped: 0 },
+          [],
+        ),
+      ).toThrow(/цен/i);
+    }
+    // A zero MOQ is likewise refused.
+    expect(() =>
+      repo.applyCatalogImport(
+        catalogOperator,
+        asSupplierId("sup-alpha"),
+        [row(1500, 0)],
+        { added: 1, updated: 0, errors: 0, skipped: 0 },
+        [],
+      ),
+    ).toThrow(/MOQ/i);
+    // Nothing was written by any refused apply.
+    expect(repo.getState().offers.some((o) => o.supplierSku === "NEG-1")).toBe(false);
   });
 
   it("refuses an atomic apply when any row has an error", () => {
