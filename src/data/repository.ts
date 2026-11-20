@@ -187,6 +187,33 @@ function cloneState(state: RepositoryState): RepositoryState {
   return structuredClone(state);
 }
 
+/**
+ * True when writing `row` over `offer` would change nothing. Used to keep a
+ * re-import a true no-op (no version bump, no observedAt drift) at the
+ * repository boundary. Deliberately compares only the values an import writes,
+ * with the same reachability the writer uses. `observedAt` timestamps are NOT
+ * compared: they move on every write and are not part of the row.
+ */
+function offerMatchesResolvedRow(
+  offer: SupplierOffer,
+  row: ResolvedImportOffer,
+): boolean {
+  const price = offer.pricePerSellUnit.value;
+  return (
+    offer.title === row.title &&
+    offer.packaging.sellUnit.label === row.sellUnitLabel &&
+    offer.packaging.sellUnit.unitsPerSellUnit === row.unitsPerSellUnit &&
+    offer.packaging.sellUnit.packSize.amount === row.packAmount &&
+    offer.packaging.sellUnit.packSize.baseUnit === row.packBaseUnit &&
+    offer.packaging.moq === row.moq &&
+    offer.packaging.orderStep === row.orderStep &&
+    price !== null &&
+    price.amount === row.pricePerSellUnit &&
+    offer.availability.value === row.availability &&
+    offer.archived === false
+  );
+}
+
 export class Repository {
   private state: RepositoryState;
   private readonly listeners = new Set<() => void>();
@@ -1224,6 +1251,14 @@ export class Repository {
       const existing = next.offers.find(
         (o) => o.supplierId === supplierId && o.supplierSku === row.sku,
       );
+
+      // Re-import must be a no-op for an identical row: never bump the version
+      // of an offer whose values would not change (defends the "re-import writes
+      // nothing" guarantee at the boundary, not only in the domain resolver).
+      if (existing && offerMatchesResolvedRow(existing, row)) {
+        continue;
+      }
+
       const productId = existing?.productId ?? asProductId(this.nextId("prod-imp"));
 
       if (!existing) {

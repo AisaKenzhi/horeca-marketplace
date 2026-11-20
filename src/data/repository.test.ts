@@ -830,12 +830,20 @@ describe("repository: real CSV catalog import", () => {
     expect(after.some((o) => o.supplierSku === "NEW-SKU-1")).toBe(true);
   });
 
-  it("re-applying the same file changes nothing (unchanged, no duplication)", () => {
+  it("re-applying the same file changes nothing (unchanged, no duplication, no version bump)", () => {
     const repo = makeRepo();
     const catalogOperator: SessionContext = {
       membership: memberships.find((m) => m.id === "mem-sup-alpha-cat")!,
       nowIso: "2026-11-19T12:05:00.000Z",
     };
+    const snapshotVersions = () =>
+      new Map(
+        repo
+          .getState()
+          .offers.filter((o) => o.supplierId === "sup-alpha")
+          .map((o) => [o.supplierSku, o.version]),
+      );
+    let versionsAfterFirstPass = new Map<string, number>();
     for (let pass = 0; pass < 2; pass += 1) {
       const existing = repo
         .getState()
@@ -860,11 +868,74 @@ describe("repository: real CSV catalog import", () => {
         expect(resolved.summary.added).toBe(0);
         expect(resolved.summary.updated).toBe(0);
         expect(resolved.summary.unchanged).toBe(2);
+        // The domain must not even queue an unchanged row for writing.
+        expect(resolved.resolved).toHaveLength(0);
+      } else {
+        versionsAfterFirstPass = snapshotVersions();
       }
     }
     const after = repo.getState().offers.filter((o) => o.supplierId === "sup-alpha");
     expect(after.filter((o) => o.supplierSku === "ALF-FLOUR-5")).toHaveLength(1);
     expect(after.filter((o) => o.supplierSku === "NEW-SKU-1")).toHaveLength(1);
+    // The second (identical) import left every offer version untouched.
+    expect(snapshotVersions()).toEqual(versionsAfterFirstPass);
+  });
+
+  it("a caller that passes an unchanged row still cannot bump its version", () => {
+    const repo = makeRepo();
+    const catalogOperator: SessionContext = {
+      membership: memberships.find((m) => m.id === "mem-sup-alpha-cat")!,
+      nowIso: "2026-11-19T12:05:00.000Z",
+    };
+    // First import to establish the offer.
+    const existing = repo
+      .getState()
+      .offers.filter((o) => o.supplierId === "sup-alpha")
+      .map((o) => ({
+        sku: o.supplierSku,
+        title: o.title,
+        pricePerSellUnit: o.pricePerSellUnit.value?.amount ?? null,
+        moq: o.packaging.moq,
+        orderStep: o.packaging.orderStep,
+      }));
+    const parsed = parseCatalogCsv(CSV, { existingSkus: existing.map((e) => e.sku) });
+    const resolved = resolveImportRows(parsed, existing);
+    repo.applyCatalogImport(
+      catalogOperator,
+      asSupplierId("sup-alpha"),
+      resolved.resolved,
+      resolved.summary,
+      [],
+    );
+    const offer = repo.getState().offers.find((o) => o.supplierSku === "ALF-FLOUR-5")!;
+    const versionBefore = offer.version;
+
+    // Simulate a caller bypassing the domain resolver and re-sending the SAME
+    // values as a resolved row. The repository boundary must still no-op it.
+    repo.applyCatalogImport(
+      catalogOperator,
+      asSupplierId("sup-alpha"),
+      [
+        {
+          sku: "ALF-FLOUR-5",
+          title: "Мука (обновлённая)",
+          category: "Бакалея",
+          sellUnitLabel: "мешок 5 кг",
+          unitsPerSellUnit: 1,
+          packAmount: 5,
+          packBaseUnit: "kg",
+          pricePerSellUnit: 3300,
+          moq: 2,
+          orderStep: 2,
+          availability: "in_stock",
+        },
+      ],
+      { added: 0, updated: 1, errors: 0, skipped: 0 },
+      [],
+    );
+
+    const after = repo.getState().offers.find((o) => o.supplierSku === "ALF-FLOUR-5")!;
+    expect(after.version).toBe(versionBefore);
   });
 
   it("refuses an atomic apply when any row has an error", () => {
