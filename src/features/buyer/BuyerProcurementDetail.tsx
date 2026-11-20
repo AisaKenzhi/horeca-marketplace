@@ -14,7 +14,11 @@ import {
   SUBORDER_STATUS_LABELS,
 } from "@/domain/orderLifecycle";
 import { describeRevisionLine } from "@/domain/revisions";
-import { canManageProcurement, canRecordReceiving } from "@/domain/authorization";
+import {
+  canCancelSuborder,
+  canManageProcurement,
+  canRecordReceiving,
+} from "@/domain/authorization";
 import { describeFlaggedReason } from "@/domain/reorder";
 import { toSafeError } from "@/domain/errors";
 import type { DiscrepancyReason, SupplierSuborder } from "@/domain/entities";
@@ -173,6 +177,26 @@ export function BuyerProcurementDetail(): ReactNode {
   const decisions = state.decisions.filter((d) => d.suborderId === activeSub.id);
   const receiptDone = state.receipts.some((r) => r.suborderId === activeSub.id);
   const canDecide = canManageProcurement(membership, activeSub.orgId);
+  // The buyer may cancel a branch that is not already in a terminal outcome.
+  const cancellable =
+    canCancelSuborder(membership, activeSub) &&
+    activeSub.status !== "cancelled" &&
+    activeSub.status !== "rejected" &&
+    activeSub.status !== "expired";
+
+  function handleCancelBranch(): void {
+    setError(null);
+    try {
+      repo.cancelSuborder(
+        session,
+        activeSub.id,
+        "Отменено покупателем (демо)",
+        activeSub.version,
+      );
+    } catch (e) {
+      setError(toSafeError(e).message);
+    }
+  }
 
   function handleReorder(): void {
     setError(null);
@@ -353,7 +377,18 @@ export function BuyerProcurementDetail(): ReactNode {
           <button type="button" className="btn btn-ghost" onClick={handleReorder}>
             {messages.procurement.reorder}
           </button>
+          {cancellable ? (
+            <button type="button" className="btn btn-ghost" onClick={handleCancelBranch}>
+              Отменить этот подзаказ
+            </button>
+          ) : null}
         </div>
+        {cancellable ? (
+          <p className="muted small">
+            Отмена затрагивает только этот подзаказ. Соседние подзаказы поставщиков не
+            меняются; это не отмена всей закупки.
+          </p>
+        ) : null}
         {reorderMessage ? (
           <p className="info small" role="status" aria-live="polite">
             {reorderMessage}

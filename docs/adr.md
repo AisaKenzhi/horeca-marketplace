@@ -257,3 +257,37 @@ demo** deployment only. No domain, paid plan, secret or production environment i
 created by this work. A hardened deployable release candidate (commit + target +
 operating mode) may be prepared for the owner; the owner must separately approve
 the exact commit, domain and mode before any public production deploy.
+
+## ADR-0014 — Branch-scoped cancellation and total parent aggregation
+
+**Status:** Accepted (post-P0 hardening).
+
+**Context.** The suborder state machine allowed a transition to `cancelled` from
+most states, and `recomputeParentStatus` handled `cancelled` children, but the
+repository had **no method that could ever cancel a branch** — the capability was
+unreachable. Separately, the parent aggregation fell through to `awaiting_supplier`
+for any mix of terminal states (e.g. one `rejected` + one `cancelled`), which
+falsely implied a supplier was still expected to respond.
+
+**Decision.**
+
+- Add `Repository.cancelSuborder(ctx, suborderId, reasonDemo, expectedVersion?)`,
+  authorised by a new `canCancelSuborder` policy: the **owning buyer org**
+  (owner/admin/buyer) may cancel any of its branches; the branch's **own
+  supplier** (owner/admin/order_operator) may cancel only its own branch. A
+  foreign org/supplier, a viewer/receiver, or a platform operator may not.
+- The operation is **branch-scoped** (siblings untouched), **state-machine
+  checked**, **optimistic-concurrency checked**, and **idempotent** (cancelling an
+  already-cancelled branch is a no-op with no second audit event).
+- Make `recomputeParentStatus` total: a mix of terminal children never reads as
+  `awaiting_supplier`; the fallback is reached only when a child is genuinely
+  pending.
+
+**Consequences / honesty.**
+
+- There is **no reservation or inventory ledger** in this prototype, so
+  cancellation cannot release a real reservation. The audit event records
+  `reservationReleased: false` rather than pretending otherwise. A real backend
+  must release the branch's own reservation in the same transaction.
+- Cancelling one branch never cancels the parent procurement; the detail views
+  always render every branch's own state.

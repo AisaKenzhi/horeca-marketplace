@@ -402,6 +402,146 @@ describe("repository: fulfillment and receiving", () => {
   });
 });
 
+describe("repository: cancel a single suborder branch", () => {
+  it("lets the owning buyer org cancel one branch without touching its sibling", () => {
+    const repo = makeRepo();
+    const { procurementId, alphaSub, betaSub } = submittedProcurement(repo);
+    repo.cancelSuborder(buyer, alphaSub, "демо: передумали");
+    const state = repo.getState();
+    const alpha = state.suborders.find((s) => s.id === alphaSub)!;
+    const beta = state.suborders.find((s) => s.id === betaSub)!;
+    expect(alpha.status).toBe("cancelled");
+    // The sibling branch is untouched and still pending, so the parent honestly
+    // stays awaiting_supplier until every branch is terminal.
+    expect(beta.status).toBe("awaiting_supplier");
+    expect(repo.getParent(procurementId)!.status).toBe("awaiting_supplier");
+  });
+
+  it("lets the branch's own supplier cancel its branch but not a sibling's", () => {
+    const repo = makeRepo();
+    const { alphaSub, betaSub } = submittedProcurement(repo);
+    // Alpha's supplier may cancel Alpha's branch...
+    repo.cancelSuborder(supplierAlpha, alphaSub, null);
+    expect(repo.getState().suborders.find((s) => s.id === alphaSub)!.status).toBe(
+      "cancelled",
+    );
+    // ...but not Beta's (a foreign branch in the same parent).
+    expect(() => repo.cancelSuborder(supplierAlpha, betaSub, null)).toThrow(/прав/i);
+    expect(repo.getState().suborders.find((s) => s.id === betaSub)!.status).toBe(
+      "awaiting_supplier",
+    );
+  });
+
+  it("refuses a foreign buyer org, a viewer and a receiver", () => {
+    const repo = makeRepo();
+    const { alphaSub } = submittedProcurement(repo);
+    expect(() => repo.cancelSuborder(hotelBuyer, alphaSub, null)).toThrow(/прав/i);
+    expect(() => repo.cancelSuborder(viewer, alphaSub, null)).toThrow(/прав/i);
+    expect(() => repo.cancelSuborder(receiver, alphaSub, null)).toThrow(/прав/i);
+  });
+
+  it("is idempotent: cancelling an already-cancelled branch is a no-op", () => {
+    const repo = makeRepo();
+    const { alphaSub } = submittedProcurement(repo);
+    repo.cancelSuborder(buyer, alphaSub, null);
+    const afterFirst = repo.getState();
+    const v = afterFirst.suborders.find((s) => s.id === alphaSub)!.version;
+    const auditCount = afterFirst.audit.filter(
+      (a) => a.action === "suborder.cancel",
+    ).length;
+    repo.cancelSuborder(buyer, alphaSub, null);
+    const afterSecond = repo.getState();
+    expect(afterSecond.suborders.find((s) => s.id === alphaSub)!.version).toBe(v);
+    expect(afterSecond.audit.filter((a) => a.action === "suborder.cancel").length).toBe(
+      auditCount,
+    );
+  });
+
+  it("refuses a stale expected version on a live branch", () => {
+    const repo = makeRepo();
+    const { alphaSub, betaSub } = submittedProcurement(repo);
+    // Advance Beta's branch so we hold a version that will be stale.
+    repo.proposeChange(
+      supplierBetaOwner,
+      betaSub,
+      [
+        {
+          offerId: "off-beta-oil",
+          changeKind: "price_changed",
+          quantityBefore: 12,
+          quantityAfter: 12,
+          priceBefore: { amount: 900, currency: "KZT" },
+          priceAfter: { amount: 950, currency: "KZT" },
+          sellUnitLabelBefore: "канистра 10 л",
+          sellUnitLabelAfter: "канистра 10 л",
+          substitutedFromOfferId: null,
+          substitutedToOfferId: null,
+          reasonDemo: "демо",
+        },
+      ],
+      null,
+    );
+    const staleVersion =
+      repo.getState().suborders.find((s) => s.id === betaSub)!.version - 1;
+    expect(() => repo.cancelSuborder(buyer, betaSub, null, staleVersion)).toThrow(
+      /изменился/,
+    );
+    // An already-cancelled branch is an idempotent no-op regardless of version.
+    repo.cancelSuborder(buyer, alphaSub, null);
+    expect(() => repo.cancelSuborder(buyer, alphaSub, null, 999)).not.toThrow();
+  });
+
+  it("records cancellation as an append-only audit event with the prior status", () => {
+    const repo = makeRepo();
+    const { alphaSub } = submittedProcurement(repo);
+    repo.cancelSuborder(buyer, alphaSub, "демо-причина");
+    const event = repo
+      .getState()
+      .audit.filter((a) => a.action === "suborder.cancel")
+      .pop()!;
+    expect(event.entityId).toBe(alphaSub);
+    expect(event.metadata.fromStatus).toBe("awaiting_supplier");
+    // It does not pretend a reservation was released in this prototype.
+    expect(event.metadata.reservationReleased).toBe(false);
+  });
+});
+
+describe("repository: parent aggregation is total", () => {
+  it("a mix of terminal branches never reads as awaiting_supplier", () => {
+    const repo = makeRepo();
+    const { procurementId, alphaSub, betaSub } = submittedProcurement(repo);
+    // Beta rejects via the buyer decision path; Alpha is cancelled.
+    repo.proposeChange(
+      supplierBetaOwner,
+      betaSub,
+      [
+        {
+          offerId: "off-beta-oil",
+          changeKind: "price_changed",
+          quantityBefore: 12,
+          quantityAfter: 12,
+          priceBefore: { amount: 900, currency: "KZT" },
+          priceAfter: { amount: 950, currency: "KZT" },
+          sellUnitLabelBefore: "канистра 10 л",
+          sellUnitLabelAfter: "канистра 10 л",
+          substitutedFromOfferId: null,
+          substitutedToOfferId: null,
+          reasonDemo: "демо",
+        },
+      ],
+      null,
+    );
+    repo.buyerDecide(buyer, betaSub, "rejected", null);
+    repo.cancelSuborder(buyer, alphaSub, null);
+    const parent = repo.getParent(procurementId)!;
+    expect(parent.status).not.toBe("awaiting_supplier");
+    // Both branches are individually visible and terminal.
+    const state = repo.getState();
+    expect(state.suborders.find((s) => s.id === betaSub)!.status).toBe("rejected");
+    expect(state.suborders.find((s) => s.id === alphaSub)!.status).toBe("cancelled");
+  });
+});
+
 describe("repository: supplier catalog edits bump version and timestamp", () => {
   it("records a new observation time on a price update", () => {
     const repo = makeRepo();
