@@ -38,6 +38,27 @@ export function canAccessBuyerOrg(m: Membership, orgId: Organization["id"]): boo
 }
 
 /**
+ * Can this membership use a specific buyer location? The location's org must
+ * match the membership's org. A location is NEVER inferred from "the first one".
+ */
+export function canAccessLocation(
+  m: Membership,
+  location: BuyerLocation | undefined,
+): boolean {
+  if (location === undefined) return false;
+  return canAccessBuyerOrg(m, location.orgId);
+}
+
+/**
+ * Can this membership manage the buyer basket for the org (add/edit/remove)?
+ * Viewers and receivers cannot. Owner/admin/buyer can.
+ */
+export function canManageBasket(m: Membership, orgId: Organization["id"]): boolean {
+  if (!canAccessBuyerOrg(m, orgId)) return false;
+  return m.role === "owner" || m.role === "admin" || m.role === "buyer";
+}
+
+/**
  * Can this membership manage (create/edit) procurement for the org?
  * Viewers and receivers cannot. Owner/admin/buyer can.
  */
@@ -137,4 +158,41 @@ export function visibleSubordersForBuyer(
     const loc = locationsById.get(s.locationId);
     return loc?.orgId === m.orgId;
   });
+}
+
+/**
+ * Single combined visibility filter. Buyers see their own org's suborders
+ * (matched by location); suppliers see only their own branch; platform operators
+ * are not granted suborder access here.
+ */
+export function visibleSuborders(
+  m: Membership,
+  suborders: readonly SupplierSuborder[],
+  locationsById: ReadonlyMap<string, BuyerLocation>,
+): readonly SupplierSuborder[] {
+  if (isBuyerSide(m)) return visibleSubordersForBuyer(m, suborders, locationsById);
+  if (isSupplierSide(m)) return visibleSubordersForSupplier(m, suborders);
+  return [];
+}
+
+/**
+ * Can this membership read a parent procurement? A buyer org may read its own;
+ * a supplier may read a parent only if it has at least one suborder inside it.
+ */
+export function canViewParentProcurement(
+  m: Membership,
+  parent: { orgId: Organization["id"] },
+  subordersInParent: readonly SupplierSuborder[],
+  locationsById: ReadonlyMap<string, BuyerLocation>,
+): boolean {
+  if (isBuyerSide(m)) {
+    return (
+      canAccessBuyerOrg(m, parent.orgId) &&
+      visibleSubordersForBuyer(m, subordersInParent, locationsById).length > 0
+    );
+  }
+  if (isSupplierSide(m)) {
+    return visibleSubordersForSupplier(m, subordersInParent).length > 0;
+  }
+  return false;
 }

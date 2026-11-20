@@ -38,3 +38,24 @@ backend can be held to the same standard.
 - Rate limiting and abuse controls on any import/upload endpoint.
 - A documented data-retention and deletion strategy.
 - Reviewed audit logging that omits PII and secrets.
+
+## Hardening pass (branch `harden/p0-product-ready`)
+
+The following P0 hardening changes were made within the local, synthetic-data
+scope only. No backend, no database, no network calls.
+
+| Area            | Change                                                                                                                                                                                                     |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| IDOR/BOLA       | Procurement detail, decisions, receipts and parent reads are tenant-scoped through `Repository.visibleSubordersOf` / `getVisibleParent`. Foreign or guessed ids return a safe not-found/forbidden.         |
+| Location scope  | The basket has an explicit deliver-to location selected from the acting org's locations (`setBasketLocation`, `canAccessLocation`). Lists are scoped by the acting membership's org, never `locations[0]`. |
+| Zone coverage   | Each supplier group carries a `zoneCoverage` state; unknown/not-covered holds the group back with an exact reason instead of "delivery available".                                                         |
+| Freshness       | A stale or changed price is a submit blocker requiring explicit re-confirmation (`cart.ts` produces `price_stale`).                                                                                        |
+| Concurrency     | `buyerDecide`, `proposeChange`, `confirmSuborderNoChange`, `updateOfferPrice`, `updateOfferAvailability` take an `expectedVersion` and reject on mismatch.                                                 |
+| Idempotency     | `submitBasket`, `applyCatalogImport`, `reorderIntoBasket` accept an idempotency key and replay instead of double-creating.                                                                                 |
+| Parent entity   | A persisted `ParentProcurement` owns its suborders; partial states aggregate without hiding any branch.                                                                                                    |
+| CSV import      | `applyCatalogImport` writes products/offers atomically, dedupes by SKU, and refuses the whole apply if any row errors; re-import writes nothing when unchanged.                                            |
+| Error catalogue | `src/domain/errors.ts` provides stable codes and safe messages; the UI renders only `message`/`nextStep`.                                                                                                  |
+
+All of the above are covered by unit/repository tests (`npm run test`) and by
+Playwright scenarios (`npm run e2e`). They run locally on synthetic data and do
+not prove that any real service, payment, or delivery works.

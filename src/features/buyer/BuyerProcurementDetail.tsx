@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApp } from "@/app/store";
 import {
@@ -15,7 +15,8 @@ import {
 } from "@/domain/orderLifecycle";
 import { describeRevisionLine } from "@/domain/revisions";
 import { canManageProcurement, canRecordReceiving } from "@/domain/authorization";
-import { buildReorderDraft, describeFlaggedReason } from "@/domain/reorder";
+import { describeFlaggedReason } from "@/domain/reorder";
+import { toSafeError } from "@/domain/errors";
 import type { DiscrepancyReason, SupplierSuborder } from "@/domain/entities";
 
 const DISCREPANCY_LABELS: Record<DiscrepancyReason, string> = {
@@ -33,6 +34,7 @@ function ReceivingForm({ suborder }: { suborder: SupplierSuborder }): ReactNode 
   const [received, setReceived] = useState<Record<string, number>>({});
   const [reasons, setReasons] = useState<DiscrepancyReason[]>([]);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const lines = suborder.confirmedLines ?? [];
 
@@ -49,17 +51,22 @@ function ReceivingForm({ suborder }: { suborder: SupplierSuborder }): ReactNode 
       className="receiving-form"
       onSubmit={(e) => {
         e.preventDefault();
-        repo.recordReceipt(
-          session,
-          suborder.id,
-          lines.map((l) => ({
-            offerId: l.offerId,
-            expectedQuantity: l.quantity,
-            receivedQuantity: received[l.offerId] ?? l.quantity,
-          })),
-          reasons,
-        );
-        setDone(true);
+        setError(null);
+        try {
+          repo.recordReceipt(
+            session,
+            suborder.id,
+            lines.map((l) => ({
+              offerId: l.offerId,
+              expectedQuantity: l.quantity,
+              receivedQuantity: received[l.offerId] ?? l.quantity,
+            })),
+            reasons,
+          );
+          setDone(true);
+        } catch (err) {
+          setError(toSafeError(err).message);
+        }
       }}
     >
       <table className="table">
@@ -117,6 +124,11 @@ function ReceivingForm({ suborder }: { suborder: SupplierSuborder }): ReactNode 
         Приёмка фиксирует наблюдение. Она не решает спор, не обещает возврат или
         компенсацию.
       </p>
+      {error ? (
+        <p className="error small" role="alert">
+          {error}
+        </p>
+      ) : null}
       <button type="submit" className="btn btn-primary">
         Записать приёмку (демо)
       </button>
@@ -128,20 +140,22 @@ export function BuyerProcurementDetail(): ReactNode {
   const { id } = useParams<{ id: string }>();
   const [search] = useSearchParams();
   const selectedSubId = search.get("sub");
-  const { state, repo, session, membership, config, messages } = useApp();
+  const { state, repo, session, membership, messages } = useApp();
   const [reorderMessage, setReorderMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const suborders = useMemo(
-    () => state.suborders.filter((s) => s.procurementId === id),
-    [state.suborders, id],
-  );
+  // Tenant-scoped: only suborders this membership may see inside this parent.
+  // A guessed/foreign id yields an empty list and a safe not-found message.
+  const suborders = id ? repo.visibleSubordersOf(session, id) : [];
+
+  const parent = id ? repo.getVisibleParent(session, id) : undefined;
 
   const active = suborders.find((s) => s.id === selectedSubId) ?? suborders[0] ?? null;
 
-  if (!active) {
+  if (!id || suborders.length === 0 || !parent || !active) {
     return (
       <Section heading={messages.procurement.heading}>
-        <EmptyState message="Закупка не найдена (демо)." />
+        <EmptyState message="Закупка не найдена или недоступна (демо)." />
         <Link className="btn btn-ghost" to="/procurement">
           {messages.common.back}
         </Link>
@@ -151,6 +165,7 @@ export function BuyerProcurementDetail(): ReactNode {
 
   const activeSub = active;
   const supplier = state.suppliers.find((s) => s.id === activeSub.supplierId);
+  const location = state.buyerLocations.find((l) => l.id === activeSub.locationId);
   const currentRevision = state.revisions.find(
     (r) => r.id === activeSub.currentRevisionId,
   );
@@ -159,35 +174,50 @@ export function BuyerProcurementDetail(): ReactNode {
   const canDecide = canManageProcurement(membership, activeSub.orgId);
 
   function handleReorder(): void {
-    // Reorder builds a NEW draft from live offers. Missing/archived/unpriced
-    // items are flagged for the buyer, not silently dropped or auto-submitted.
-    const sourceLines =
-      activeSub.confirmedLines ??
-      currentRevision?.lines.map((l) => ({
-        offerId: l.offerId,
-        quantity: l.quantityAfter ?? 1,
-      })) ??
-      [];
-    const candidates = sourceLines.map((l) => ({
-      offerId: l.offerId,
-      supplierId: activeSub.supplierId,
-      title: "",
-      requestedQuantity: l.quantity,
-      liveOffer: state.offers.find((o) => o.id === l.offerId) ?? null,
-    }));
-    const draft = buildReorderDraft(candidates, config.demoNow);
-    if (draft.summary.flagged > 0) {
-      const reasons = draft.flagged
-        .filter((f): f is Extract<typeof f, { kind: "flagged" }> => f.kind === "flagged")
-        .map((f) => describeFlaggedReason(f.reason));
-      setReorderMessage(
-        `Перенесено в новый черновик: ${draft.summary.carried}. Требуют внимания: ${draft.summary.flagged}. ${reasons.join(" ")}`,
+    setError(null);
+    try {
+      // Persist a NEW editable draft in the buyer's basket and re-check live
+      // terms. Missing/archived/unpriced items become an explicit decision list.
+      const { draft, replayed } = repo.reorderIntoBasket(
+        { ...session, idempotencyKey: `reorder-${activeSub.id}-${session.nowIso}` },
+        activeSub.id,
       );
-      return;
+      if (replayed) {
+        setReorderMessage("Черновик повтора уже создан. Откройте корзину.");
+        return;
+      }
+      if (draft.summary.flagged > 0) {
+        const reasons = draft.flagged
+          .filter(
+            (f): f is Extract<typeof f, { kind: "flagged" }> => f.kind === "flagged",
+          )
+          .map((f) => describeFlaggedReason(f.reason));
+        setReorderMessage(
+          `Черновик создан: перенесено ${draft.summary.carried}. Требуют решения: ${draft.summary.flagged}. ${reasons.join(" ")}`,
+        );
+      } else {
+        setReorderMessage(
+          `Черновик создан из ${draft.summary.carried} позиций. Цена и наличие будут перепроверены в корзине. Старые условия не воспроизводятся автоматически.`,
+        );
+      }
+    } catch (e) {
+      setError(toSafeError(e).message);
     }
-    setReorderMessage(
-      `Создан новый черновик из ${draft.summary.carried} позиций. Цена и наличие будут перепроверены в корзине. Старые условия не воспроизводятся автоматически.`,
-    );
+  }
+
+  function handleDecide(outcome: "accepted" | "rejected"): void {
+    setError(null);
+    try {
+      repo.buyerDecide(
+        session,
+        activeSub.id,
+        outcome,
+        outcome === "rejected" ? "Отклонено в демо" : null,
+        activeSub.version,
+      );
+    } catch (e) {
+      setError(toSafeError(e).message);
+    }
   }
 
   return (
@@ -196,6 +226,15 @@ export function BuyerProcurementDetail(): ReactNode {
         heading={`${supplier?.displayName ?? "—"} · ${activeSub.id}`}
         headingId="suborder-heading"
       >
+        <Notice tone="warn">
+          Это не единый договор, счёт или доставка. Одна родительская закупка содержит
+          независимые подзаказы: {parent.suborderIds.length}.
+        </Notice>
+        <p className="muted small">
+          Точка доставки: <strong>{location?.name ?? "не выбрана (демо)"}</strong>
+          {location ? ` · зона ${location.deliveryZone}` : ""}. Продавец:{" "}
+          {supplier?.displayName ?? "—"}.
+        </p>
         <div className="pill-row">
           <StatusPill
             label={`${messages.statuses.agreement}: ${SUBORDER_STATUS_LABELS[activeSub.status]}`}
@@ -210,9 +249,7 @@ export function BuyerProcurementDetail(): ReactNode {
             tone="neutral"
           />
         </div>
-        <p className="muted small">
-          Версия подзаказа: {activeSub.version}. Продавец: {supplier?.displayName ?? "—"}.
-        </p>
+        <p className="muted small">Версия подзаказа: {activeSub.version}.</p>
 
         {currentRevision && currentRevision.lines.length > 0 ? (
           <details open className="revision">
@@ -257,16 +294,14 @@ export function BuyerProcurementDetail(): ReactNode {
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => repo.buyerDecide(session, activeSub.id, "accepted", null)}
+              onClick={() => handleDecide("accepted")}
             >
               {messages.procurement.accept}
             </button>
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() =>
-                repo.buyerDecide(session, activeSub.id, "rejected", "Отклонено в демо")
-              }
+              onClick={() => handleDecide("rejected")}
             >
               {messages.procurement.reject}
             </button>
@@ -321,6 +356,11 @@ export function BuyerProcurementDetail(): ReactNode {
         {reorderMessage ? (
           <p className="info small" role="status" aria-live="polite">
             {reorderMessage}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="error small" role="alert">
+            {error}
           </p>
         ) : null}
       </Section>

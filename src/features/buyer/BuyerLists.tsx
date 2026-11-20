@@ -4,10 +4,10 @@ import { EmptyState, MoneyText, Notice, Section } from "@/components/primitives"
 import { describePackaging } from "@/components/format";
 
 export function BuyerLists(): ReactNode {
-  const { state, messages } = useApp();
-  const lists = state.buyerLists.filter(
-    (l) => l.orgId === state.buyerLocations[0]?.orgId,
-  );
+  const { state, membership, messages } = useApp();
+  // Scope lists by the acting membership's organisation — never by "the first
+  // location". A buyer org sees only its own lists.
+  const lists = state.buyerLists.filter((l) => l.orgId === membership.orgId);
 
   if (lists.length === 0) {
     return (

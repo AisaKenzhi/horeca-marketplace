@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { computeCart, computeLine, priceDelta } from "@/domain/cart";
+import { computeCart, computeLine, priceDelta, zoneCoverage } from "@/domain/cart";
 import { money } from "@/domain/money";
 import {
+  NOW,
   demoOffers,
   demoSuppliers,
   makeBasket,
@@ -10,13 +11,23 @@ import {
   offerAlphaStale,
   offerBetaOil,
   offerBetaUnknownPrice,
+  supplierBeta,
 } from "../../tests/fixtures";
 
 const offersById = new Map(demoOffers.map((o) => [o.id as string, o]));
 const suppliersById = new Map(demoSuppliers.map((s) => [s.id as string, s]));
 
-function cart(lines: Parameters<typeof makeBasket>[0]) {
-  return computeCart(makeBasket(lines), offersById, suppliersById);
+// The default demo zone is `almaty-center`, which both demo suppliers cover.
+const DEMO_ZONE = "almaty-center";
+
+function cart(
+  lines: Parameters<typeof makeBasket>[0],
+  options: { nowIso?: string; locationZone?: string | null } = {},
+) {
+  return computeCart(makeBasket(lines), offersById, suppliersById, {
+    nowIso: options.nowIso ?? NOW,
+    locationZone: "locationZone" in options ? options.locationZone : DEMO_ZONE,
+  });
 }
 
 describe("cart -> supplier suborders", () => {
@@ -128,7 +139,7 @@ describe("cart -> supplier suborders", () => {
 
   it("uses the live price, not a stale snapshot, for subtotals", () => {
     const line = makeBasketLine("l1", offerAlphaFlour, 2);
-    const computed = computeLine(line, offerAlphaFlour);
+    const computed = computeLine(line, offerAlphaFlour, NOW);
     expect(computed.subtotal.amount).toBe(6400);
   });
 
@@ -150,11 +161,58 @@ describe("cart -> supplier suborders", () => {
     expect(priceDelta(line, offerAlphaFlour).note).toBe("unchanged");
   });
 
-  it("keeps a stale-price line usable but exposes its timestamp via freshness elsewhere", () => {
-    // Stale price is still a known price (not null); freshness UI labels it.
+  it("blocks a stale price and requires explicit confirmation", () => {
+    // Stale price is a known price, but it must NOT be silently submitted.
     const result = cart([makeBasketLine("ls", offerAlphaStale, 1)]);
     const group = result.groups[0]!;
-    expect(group.lines[0]!.problem).toBeNull();
-    expect(group.lines[0]!.subtotal.amount).toBe(28_000);
+    expect(group.lines[0]!.problem?.kind).toBe("price_stale");
+    expect(group.lines[0]!.priceFreshness.state).toBe("stale");
+    expect(group.needsPriceConfirmation).toBe(true);
+    expect(group.readyToSubmit).toBe(false);
+  });
+
+  it("flags a changed price since the line was added", () => {
+    // A line whose snapshot (3200) differs from the live price must be flagged.
+    const line = {
+      ...makeBasketLine("l1", offerAlphaFlour, 2),
+      addedAtPriceSnapshot: money(3_100),
+    };
+    const result = cart([line]);
+    const group = result.groups[0]!;
+    expect(group.lines[0]!.priceChangedSinceAdded).toBe(true);
+    expect(group.needsPriceConfirmation).toBe(true);
+    expect(group.readyToSubmit).toBe(false);
+  });
+
+  it("blocks submission when the supplier does not cover the selected zone", () => {
+    const result = cart([makeBasketLine("l1", offerAlphaFlour, 6)], {
+      locationZone: "almaty-north",
+    });
+    const alpha = result.groups.find((g) => g.supplierId === offerAlphaFlour.supplierId)!;
+    const beta = result.groups.find((g) => g.supplierId === offerBetaOil.supplierId);
+    // Alpha covers almaty-north; this basket only has Alpha lines.
+    expect(alpha.zoneCoverage.state).toBe("covered");
+    expect(beta).toBeUndefined();
+  });
+
+  it("reports unknown zone coverage, never 'delivery available'", () => {
+    const coverage = zoneCoverage(supplierBeta, null);
+    expect(coverage.state).toBe("unknown");
+    const result = cart([makeBasketLine("l2", offerBetaOil, 6)], {
+      locationZone: null,
+    });
+    const beta = result.groups[0]!;
+    expect(beta.zoneCoverage.state).toBe("unknown");
+    expect(beta.readyToSubmit).toBe(false);
+  });
+
+  it("blocks a supplier whose zones exclude the selected zone", () => {
+    // Beta only covers almaty-center.
+    const result = cart([makeBasketLine("l2", offerBetaOil, 12)], {
+      locationZone: "almaty-north",
+    });
+    const beta = result.groups[0]!;
+    expect(beta.zoneCoverage.state).toBe("not_covered");
+    expect(beta.readyToSubmit).toBe(false);
   });
 });

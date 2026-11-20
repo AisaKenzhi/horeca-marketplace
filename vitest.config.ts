@@ -19,6 +19,17 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "html"],
       include: ["src/domain/**", "src/data/**"],
+      // Type-only modules (e.g. entities.ts) have no runtime code to cover.
+      exclude: ["src/domain/entities.ts"],
+      // Honest floors measured on the current suite, set a little below the
+      // observed values so they stop regressions without being aspirational.
+      // Raise them deliberately as coverage genuinely improves.
+      thresholds: {
+        statements: 82,
+        branches: 74,
+        functions: 85,
+        lines: 82,
+      },
     },
   },
 });

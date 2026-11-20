@@ -26,7 +26,7 @@ function statusTone(status: string): "neutral" | "info" | "warn" | "ok" | "bad" 
 }
 
 export function BuyerProcurement(): ReactNode {
-  const { state, membership, messages } = useApp();
+  const { state, repo, session, membership, messages } = useApp();
 
   const locationsById = useMemo(
     () =>
@@ -61,48 +61,56 @@ export function BuyerProcurement(): ReactNode {
 
   return (
     <div className="stack">
-      {[...byProcurement.entries()].map(([procurementId, suborders]) => (
-        <Section
-          key={procurementId}
-          heading={`${messages.procurement.parentLabel}: ${procurementId}`}
-          headingId={`proc-${procurementId}`}
-        >
-          <p className="muted small">
-            {messages.procurement.subordersLabel}: {suborders.length}
-          </p>
-          <ul className="suborder-list">
-            {suborders.map((s) => (
-              <li key={s.id} className="suborder-item">
-                <div>
-                  <strong>
-                    {state.suppliers.find((x) => x.id === s.supplierId)?.displayName}
-                  </strong>
-                  <div className="pill-row">
-                    <StatusPill
-                      label={`${messages.statuses.agreement}: ${SUBORDER_STATUS_LABELS[s.status]}`}
-                      tone={statusTone(s.status)}
-                    />
-                    <StatusPill
-                      label={`${messages.statuses.fulfillment}: ${FULFILLMENT_STATUS_LABELS[s.fulfillmentStatus]}`}
-                      tone="neutral"
-                    />
-                    <StatusPill
-                      label={`${messages.statuses.payment}: ${PAYMENT_STATUS_LABELS[s.paymentStatus]}`}
-                      tone="neutral"
-                    />
+      {[...byProcurement.entries()].map(([procurementId, suborders]) => {
+        const parent = repo.getVisibleParent(session, procurementId);
+        const location = parent
+          ? state.buyerLocations.find((l) => l.id === parent.locationId)
+          : undefined;
+        return (
+          <Section
+            key={procurementId}
+            heading={`${messages.procurement.parentLabel}: ${procurementId}`}
+            headingId={`proc-${procurementId}`}
+          >
+            <p className="muted small">
+              {messages.procurement.subordersLabel}: {suborders.length}
+              {parent ? ` · статус: ${parent.status}` : ""}
+              {location ? ` · точка: ${location.name}` : ""}
+            </p>
+            <ul className="suborder-list">
+              {suborders.map((s) => (
+                <li key={s.id} className="suborder-item">
+                  <div>
+                    <strong>
+                      {state.suppliers.find((x) => x.id === s.supplierId)?.displayName}
+                    </strong>
+                    <div className="pill-row">
+                      <StatusPill
+                        label={`${messages.statuses.agreement}: ${SUBORDER_STATUS_LABELS[s.status]}`}
+                        tone={statusTone(s.status)}
+                      />
+                      <StatusPill
+                        label={`${messages.statuses.fulfillment}: ${FULFILLMENT_STATUS_LABELS[s.fulfillmentStatus]}`}
+                        tone="neutral"
+                      />
+                      <StatusPill
+                        label={`${messages.statuses.payment}: ${PAYMENT_STATUS_LABELS[s.paymentStatus]}`}
+                        tone="neutral"
+                      />
+                    </div>
                   </div>
-                </div>
-                <Link
-                  className="btn btn-ghost"
-                  to={`/procurement/${procurementId}?sub=${s.id}`}
-                >
-                  {messages.procurement.open}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      ))}
+                  <Link
+                    className="btn btn-ghost"
+                    to={`/procurement/${procurementId}?sub=${s.id}`}
+                  >
+                    {messages.procurement.open}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        );
+      })}
       {!canManageProcurement(membership, membership.orgId) ? (
         <Notice tone="info">
           Эта демо-роль в режиме просмотра. Действия по закупке недоступны.
