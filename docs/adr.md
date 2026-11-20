@@ -92,6 +92,11 @@ immutable confirmed lines.
 
 - Trial/trace of every change and decision.
 - No auto-confirmation anywhere.
+- **Deliberate, reversible product choice:** editing a basket line's _quantity_
+  re-baselines that line's `addedAtPriceSnapshot` to the current live price
+  (an explicit act of intent resets the reminder), while the separate price
+  freshness badge still flags a stale/unknown price. This is pinned by a
+  repository test; if the choice is reversed, that test changes with it.
 
 ## ADR-0006 — No payment, messaging, or publishing in P0
 
