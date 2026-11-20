@@ -99,6 +99,10 @@ npm run e2e         # Playwright, desktop + mobile, against local preview
 
 `npm run verify` = lint → typecheck → unit tests → build. All must be green.
 Playwright runs against the local preview server only, never a public host.
+The E2E suite includes an automated accessibility gate
+(`e2e/accessibility.spec.ts`) that asserts every reachable screen is free of
+detectable WCAG 2.1 A/AA violations (axe-core). It does **not** replace a manual
+screen-reader/keyboard pass.
 
 ## Honesty about what tests prove
 
