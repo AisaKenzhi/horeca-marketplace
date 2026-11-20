@@ -491,31 +491,47 @@ export const buyerLists: readonly BuyerList[] = [
 
 /* ----------------------------- Basket ---------------------------------- */
 
-export const basket: Basket = {
-  id: asBasketId("basket-cafe-1"),
-  orgId: asOrgId("org-demo-cafe"),
-  locationId: asBuyerLocationId("loc-cafe-1"),
-  lines: [
-    {
-      id: "bl-1" as Basket["lines"][number]["id"],
-      offerId: asOfferId("off-alpha-flour"),
-      supplierId: asSupplierId("sup-alpha"),
-      // 6 x 3 200 = 19 200 >= Alpha minimum of 15 000 (demo default is submittable).
-      quantity: 6,
-      addedAtPriceSnapshot: money(3_200),
-      addedAt: asIso(hoursAgo(1)),
-    },
-    {
-      id: "bl-2" as Basket["lines"][number]["id"],
-      offerId: asOfferId("off-beta-oil"),
-      supplierId: asSupplierId("sup-beta"),
-      // 12 x 900 = 10 800 >= Beta minimum of 10 000.
-      quantity: 12,
-      addedAtPriceSnapshot: money(900),
-      addedAt: asIso(hoursAgo(2)),
-    },
-  ],
-};
+/*
+ * ONE basket per buyer org. The café has a ready-to-submit demo basket; the
+ * hotel has an empty basket at a hotel location so a second tenant can be
+ * exercised without touching the café's lines.
+ */
+export const baskets: readonly Basket[] = [
+  {
+    id: asBasketId("basket-cafe-1"),
+    orgId: asOrgId("org-demo-cafe"),
+    locationId: asBuyerLocationId("loc-cafe-1"),
+    lines: [
+      {
+        id: "bl-1" as Basket["lines"][number]["id"],
+        offerId: asOfferId("off-alpha-flour"),
+        supplierId: asSupplierId("sup-alpha"),
+        // 6 x 3 200 = 19 200 >= Alpha minimum of 15 000 (demo default is submittable).
+        quantity: 6,
+        addedAtPriceSnapshot: money(3_200),
+        addedAt: asIso(hoursAgo(1)),
+      },
+      {
+        id: "bl-2" as Basket["lines"][number]["id"],
+        offerId: asOfferId("off-beta-oil"),
+        supplierId: asSupplierId("sup-beta"),
+        // 12 x 900 = 10 800 >= Beta minimum of 10 000.
+        quantity: 12,
+        addedAtPriceSnapshot: money(900),
+        addedAt: asIso(hoursAgo(2)),
+      },
+    ],
+  },
+  {
+    id: asBasketId("basket-hotel-1"),
+    orgId: asOrgId("org-demo-hotel"),
+    locationId: asBuyerLocationId("loc-hotel-1"),
+    lines: [],
+  },
+];
+
+/** @deprecated Use `baskets`; kept as the café basket for existing callers. */
+export const basket: Basket = baskets[0]!;
 
 /* ------------------------ Demo notifications --------------------------- */
 

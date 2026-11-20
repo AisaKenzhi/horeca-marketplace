@@ -59,3 +59,34 @@ scope only. No backend, no database, no network calls.
 All of the above are covered by unit/repository tests (`npm run test`) and by
 Playwright scenarios (`npm run e2e`). They run locally on synthetic data and do
 not prove that any real service, payment, or delivery works.
+
+## Expanded threat model (post-P0 hardening)
+
+Each row names the prevention, the test that covers it locally, and the residual
+risk once a real backend exists.
+
+| Threat                        | Prevention (local)                                                                                                             | Covered by                                                                            | Residual risk                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Cross-tenant read (IDOR/BOLA) | Every read is scoped to the acting org/supplier; foreign or guessed ids return undefined/forbidden                             | `authorization.test.ts`, `repository.test.ts` (procurement detail, suborders, parent) | Must be re-enforced server-side with RLS + object checks                  |
+| Cross-tenant basket write     | Baskets are per-org (`baskets[]` by `orgId`); a second org gets its own basket, never the first org's                          | `repository.test.ts` "per-org baskets"                                                | Needs a unique `organization_id` constraint server-side                   |
+| Privilege escalation          | Per-action role checks (`canManageBasket/Procurement`, `canEditSupplierCatalog`, `canRespondToSuborder`, `canRecordReceiving`) | `authorization.test.ts` role matrix                                                   | Server must derive the role from a trusted membership row, not the client |
+| Viewer/receiver write         | Viewers and receivers cannot edit basket/lists/terms; receivers can only record receiving                                      | `repository.test.ts`                                                                  | same                                                                      |
+| Stale-data application        | Stale/changed price is a submit blocker; buyer re-confirms the exact revision; unknown ≠ 0                                     | `cart.test.ts`, `freshness.test.ts`                                                   | Requires the server's live re-check at checkout                           |
+| Lost update / race            | Optimistic `expectedVersion` on buyer/suborder/offer/receipt/fulfillment writes                                                | `repository.test.ts` concurrency cases                                                | Needs DB-level conditional updates / row locks                            |
+| Double submit / replay        | Idempotency keys on submit/import/reorder; fulfillment events keyed per transition                                             | `repository.test.ts`                                                                  | Needs a unique idempotency constraint server-side                         |
+| Unsafe CSV / file import      | Bounded size/rows, plain-text parse, formula/HTML neutralisation, no macro execution, atomic apply, SKU dedup                  | `catalogImport.test.ts`                                                               | Server must bound upload size/rate and never eval cells                   |
+| XSS                           | React escaping; no `dangerouslySetInnerHTML`; CSV rendered as text                                                             | code review                                                                           | CSP headers and output-encoding on the server                             |
+| CSRF / SQL injection / SSRF   | No server, no SQL, no cookies, no outbound fetch today                                                                         | n/a (modelled)                                                                        | Must be handled when a backend/import fetch exists                        |
+| Secret leakage                | No secrets in repo; `.env*` ignored; nothing sent to the browser that shouldn't be                                             | `.gitignore`, review                                                                  | Secret manager + rotation on the server                                   |
+| PII in logs/audit             | Audit metadata is a small non-PII bag; fixtures are fictional                                                                  | `errors.test.ts`, fixtures                                                            | Structured logging with redaction server-side                             |
+| Rate abuse / brute force      | Not applicable (no endpoints); import size-bounded                                                                             | n/a                                                                                   | Rate limits on registration/search/import when live                       |
+
+## Reliability
+
+- Retries are only for transient, idempotent operations; business errors are not
+  retried. Side effects carry an idempotency key. A conflict asks the caller to
+  re-read rather than overwrite. There is no automatic network retry because
+  there is no network.
+- Observability is **local only**: there is no connected monitoring, alerting or
+  tracing system, and none is claimed. A real deployment must add health checks,
+  error/latency/conflict metrics and correlation ids.

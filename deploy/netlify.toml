@@ -1,0 +1,16 @@
+# Netlify config for the static demo. Inert until a site is created by the owner.
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# SPA history fallback: unknown paths serve index.html (client-side routing).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Keep the synthetic demo out of search engines.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"

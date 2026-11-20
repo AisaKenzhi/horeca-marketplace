@@ -187,3 +187,73 @@ has an error. XLSX, ERP/1C and live sync remain out of scope.
 - Re-importing the same file changes nothing and creates no duplicates.
 - A single bad row cannot partially corrupt a valid apply.
 - The file is treated as plain text; no formulas, macros or HTML are executed.
+
+## ADR-0011 — Per-organization baskets
+
+**Status:** Accepted (post-P0 hardening).
+
+**Context.** The repository held a single `basket`, hard-bound to one org id. A
+second buyer organization saw an empty basket and every basket write threw
+`forbidden`, so a legitimate multi-tenant deployment could not function, and the
+modeling risked conflating two tenants' lines.
+
+**Decision.** `RepositoryState.basket` becomes `baskets: Basket[]`, scanned by
+`orgId` (never by position). Basket reads/writes resolve the acting org's own
+basket, creating an empty one lazily on first write. `submitBasket`,
+`reorderIntoBasket`, lists and location selection remain scoped to the acting
+org; a foreign location is still rejected.
+
+**Consequences.**
+
+- Two buyer orgs can each hold, edit and submit their own basket.
+- No shared basket object can leak or block across tenants.
+- A real backend must key baskets by `organization_id` with a unique constraint.
+
+## ADR-0012 — Backend path: keep the boundary, defer the provider
+
+**Status:** Open / proposed. Not implemented.
+
+**Context.** The product needs real server-side authentication and authorization,
+durable storage and row-level security before any public launch (see the launch
+gates). No staging environment, provider account, credentials or legal operator
+exist yet, and creating a paid resource needs separate permission.
+
+**Decision (proposed, not executed).** Keep the current pure-domain + repository
+boundary and treat the in-browser `Repository` as a stand-in for a server API.
+When a backend is chosen, the lowest-risk path is a single relational database
+(PostgreSQL, possibly via Supabase) with:
+
+- one table per domain entity in `src/domain/entities.ts`;
+- `organization_id` / `supplier_id` / `location_id` foreign keys on every
+  tenant-owned row, with uniqueness on `(supplier_id, supplier_sku)` and on
+  `(organization_id)` for the basket;
+- RLS enabled (deny-by-default) on every exposed table, policies derived from a
+  trusted membership table, never from client-supplied ids or `user_metadata`;
+- the same optimistic `version` columns the repository already uses;
+- the domain functions in `src/domain/**` reused server-side, not re-implemented.
+
+This ADR stays **proposed** until a dedicated non-production environment and
+explicit permission exist. No provider is selected; `@supabase/supabase-js` is
+present but unused, and is not evidence of a backend.
+
+**Consequences.**
+
+- The client rules remain the only enforcement today and are explicitly not a
+  security boundary once data leaves the browser.
+- A future server must reproduce every check currently unit-tested in the
+  repository, plus RLS tests per role/tenant.
+
+## ADR-0013 — Deployment posture: static demo only, no paid resources
+
+**Status:** Accepted.
+
+**Context.** The build produces a static SPA in `dist/`. Hosting it as a public
+demo is technically trivial, but the brief distinguishes a demo from a live
+marketplace and forbids creating paid resources or publishing without explicit
+owner approval.
+
+**Decision.** The repository ships configuration and a runbook for a **static
+demo** deployment only. No domain, paid plan, secret or production environment is
+created by this work. A hardened deployable release candidate (commit + target +
+operating mode) may be prepared for the owner; the owner must separately approve
+the exact commit, domain and mode before any public production deploy.
