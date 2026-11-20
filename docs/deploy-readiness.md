@@ -53,6 +53,12 @@ Static-host config templates live next to this doc:
 - `deploy/_redirects` — Cloudflare Pages / Netlify fallback rule.
 - `deploy/vercel.json` — rewrites + `X-Robots-Tag: noindex`.
 - `deploy/README.md` — step-by-step for each host, and the base-path caveat.
+- `.github/workflows/deploy-demo.yml` — **manual-only** GitHub Pages publish of
+  the synthetic demo. It never runs on push (needs `workflow_dispatch` with the
+  confirmation phrase `publish-demo`), builds with the project sub-path base,
+  adds `404.html` + `robots.txt`, and deploys to Pages. Free, no domain, no
+  secrets. Enable by setting the repo's Pages source to "GitHub Actions", then
+  run the workflow manually.
 
 These are inert until a host is configured and the owner approves the publish.
 
