@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/data/supabase/client";
+import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
 import type {
   CatalogAvailability,
   OrganizationType,
 } from "@/data/supabase/database.types";
 import {
+  canManageSupplierCatalog,
   createBuyerLocation,
   createCatalogOffer,
   createOrganization,
   createSupplierProfile,
   loadWorkspace,
   setCatalogOfferPublished,
+  updateCatalogOfferTerms,
   workspaceErrorMessage,
   type BuyerLocationDraft,
   type CatalogOfferDraft,
@@ -262,6 +265,10 @@ function AccountWorkspaceReady({
   const activeLocations = snapshot.locations.filter(
     (location) => location.organization_id === activeOrganization?.id,
   );
+  const canEditCatalogOffers =
+    activeOrganization !== undefined &&
+    activeProfile?.verification_status === "approved" &&
+    canManageSupplierCatalog(activeOrganization.role);
 
   async function runAction(action: () => Promise<unknown>, successMessage: string) {
     setActionBusy(true);
@@ -479,7 +486,7 @@ function AccountWorkspaceReady({
                             >
                               {offer.is_published ? "Опубликовано" : "Черновик"}
                             </span>
-                            {activeProfile.verification_status === "approved" ? (
+                            {canEditCatalogOffers ? (
                               <button
                                 className="btn"
                                 type="button"
@@ -504,6 +511,27 @@ function AccountWorkspaceReady({
                               </button>
                             ) : null}
                           </div>
+                          {canEditCatalogOffers ? (
+                            <CatalogOfferTermsForm
+                              offerId={offer.id}
+                              priceAmount={offer.price_amount}
+                              currency={offer.currency}
+                              availability={offer.availability}
+                              busy={actionBusy}
+                              onUpdate={(terms) =>
+                                runAction(
+                                  () =>
+                                    updateCatalogOfferTerms(
+                                      client,
+                                      activeOrganization.id,
+                                      offer.id,
+                                      terms,
+                                    ),
+                                  "Цена и наличие предложения обновлены.",
+                                ).then(() => undefined)
+                              }
+                            />
+                          ) : null}
                         </li>
                       ))}
                     </ul>

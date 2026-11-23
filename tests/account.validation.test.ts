@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { CatalogOfferDraft } from "@/data/supabase/workspace";
+import type { CatalogOfferDraft, CatalogOfferTerms } from "@/data/supabase/workspace";
 import {
   validateBuyerLocation,
   validateCatalogOffer,
+  validateCatalogOfferTerms,
   validateOrganizationName,
 } from "@/data/supabase/validation";
 
@@ -55,5 +56,28 @@ describe("authenticated workspace input validation", () => {
   it("requires a three-letter currency code when price is supplied", () => {
     expect(validateCatalogOffer({ ...validOffer, currency: "PL" })).not.toBeNull();
     expect(validateCatalogOffer({ ...validOffer, currency: "pln" })).not.toBeNull();
+  });
+
+  it("validates editable terms without choosing a currency or market", () => {
+    const terms: CatalogOfferTerms = {
+      priceAmount: 18.75,
+      currency: "KZT",
+      availability: "in_stock",
+    };
+    expect(validateCatalogOfferTerms(terms)).toBeNull();
+    expect(
+      validateCatalogOfferTerms({ ...terms, priceAmount: null, currency: null }),
+    ).toBeNull();
+    expect(validateCatalogOfferTerms({ ...terms, priceAmount: 0 })).not.toBeNull();
+    expect(validateCatalogOfferTerms({ ...terms, currency: "eur" })).not.toBeNull();
+    expect(
+      validateCatalogOfferTerms({ ...terms, priceAmount: null, currency: "EUR" }),
+    ).not.toBeNull();
+    expect(
+      validateCatalogOfferTerms({
+        ...terms,
+        availability: "unavailable" as CatalogOfferTerms["availability"],
+      }),
+    ).not.toBeNull();
   });
 });

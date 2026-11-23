@@ -1,4 +1,8 @@
-import type { CatalogOfferDraft, BuyerLocationDraft } from "./workspace";
+import type {
+  CatalogOfferDraft,
+  CatalogOfferTerms,
+  BuyerLocationDraft,
+} from "./workspace";
 
 export function validateOrganizationName(name: string): string | null {
   const normalized = name.trim();
@@ -25,6 +29,27 @@ function positiveInteger(value: number): boolean {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+function validatePriceAndCurrency(
+  priceAmount: number | null,
+  currency: string | null,
+): string | null {
+  if (priceAmount !== null) {
+    if (
+      !Number.isFinite(priceAmount) ||
+      priceAmount <= 0 ||
+      priceAmount > 999_999_999_999.9999
+    ) {
+      return "Цена должна быть больше нуля и не превышать допустимый диапазон.";
+    }
+    if (!/^[A-Z]{3}$/.test(currency ?? "")) {
+      return "Для цены укажите трёхбуквенный код валюты латиницей, например EUR.";
+    }
+  } else if (currency !== null) {
+    return "Код валюты можно указать только вместе с ценой.";
+  }
+  return null;
+}
+
 export function validateCatalogOffer(input: CatalogOfferDraft): string | null {
   if (input.supplierSku.trim().length < 1 || input.supplierSku.trim().length > 80) {
     return "SKU должен содержать от 1 до 80 символов.";
@@ -48,25 +73,26 @@ export function validateCatalogOffer(input: CatalogOfferDraft): string | null {
   ) {
     return "Количество в упаковке должно быть больше нуля и не превышать допустимый диапазон.";
   }
-  if (input.priceAmount !== null) {
-    if (
-      !Number.isFinite(input.priceAmount) ||
-      input.priceAmount <= 0 ||
-      input.priceAmount > 999_999_999_999.9999
-    ) {
-      return "Цена должна быть больше нуля и не превышать допустимый диапазон.";
-    }
-    if (!/^[A-Z]{3}$/.test(input.currency ?? "")) {
-      return "Для цены укажите трёхбуквенный код валюты латиницей, например EUR.";
-    }
-  } else if (input.currency !== null) {
-    return "Код валюты можно указать только вместе с ценой.";
-  }
+  const priceError = validatePriceAndCurrency(input.priceAmount, input.currency);
+  if (priceError) return priceError;
   if (!positiveInteger(input.moq)) {
     return "Минимальное количество заказа должно быть целым числом больше нуля.";
   }
   if (!positiveInteger(input.orderStep)) {
     return "Шаг заказа должен быть целым числом больше нуля.";
+  }
+  return null;
+}
+
+export function validateCatalogOfferTerms(input: CatalogOfferTerms): string | null {
+  const priceError = validatePriceAndCurrency(input.priceAmount, input.currency);
+  if (priceError) return priceError;
+  if (
+    !["in_stock", "low_stock", "out_of_stock", "on_request", "unknown"].includes(
+      input.availability,
+    )
+  ) {
+    return "Выберите допустимый статус наличия.";
   }
   return null;
 }

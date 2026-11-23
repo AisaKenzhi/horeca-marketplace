@@ -128,7 +128,12 @@ export type Database = {
           price_valid_until?: string | null;
           is_published?: boolean;
         },
-        Partial<Pick<CatalogOfferRow, "is_published">>
+        Partial<
+          Pick<
+            CatalogOfferRow,
+            "is_published" | "price_amount" | "currency" | "availability"
+          >
+        >
       >;
     };
     Views: { [_ in never]: never };

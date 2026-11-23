@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   BuyerLocationRow,
+  CatalogAvailability,
   CatalogOfferRow,
   Database,
   MembershipRole,
@@ -11,6 +12,7 @@ import type {
 import {
   validateBuyerLocation,
   validateCatalogOffer,
+  validateCatalogOfferTerms,
   validateOrganizationName,
 } from "./validation";
 
@@ -38,6 +40,12 @@ export interface CatalogOfferDraft {
     "in_stock" | "low_stock" | "out_of_stock" | "on_request" | "unknown";
 }
 
+export interface CatalogOfferTerms {
+  readonly priceAmount: number | null;
+  readonly currency: string | null;
+  readonly availability: CatalogAvailability;
+}
+
 export interface OrganizationWorkspace extends OrganizationRow {
   readonly role: MembershipRole;
 }
@@ -54,6 +62,10 @@ export interface WorkspaceSnapshot {
 
 export type WorkspaceErrorCode =
   "invalid" | "permission" | "duplicate" | "unavailable" | "not_found";
+
+export function canManageSupplierCatalog(role: MembershipRole): boolean {
+  return role === "owner" || role === "admin" || role === "catalog_operator";
+}
 
 export class WorkspaceError extends Error {
   constructor(readonly code: WorkspaceErrorCode) {
@@ -86,6 +98,42 @@ function unwrap<T>(data: T | null, error: unknown): T {
   if (error) throw mapError(error);
   if (data === null) throw new WorkspaceError("unavailable");
   return data;
+}
+
+async function assertSupplierCatalogEditAccess(
+  client: WorkspaceClient,
+  organizationId: string,
+): Promise<void> {
+  const membershipResult = await client
+    .from("organization_memberships")
+    .select("role")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (membershipResult.error) throw mapError(membershipResult.error);
+  if (!membershipResult.data || !canManageSupplierCatalog(membershipResult.data.role)) {
+    throw new WorkspaceError("permission");
+  }
+
+  const [organizationResult, profileResult] = await Promise.all([
+    client
+      .from("organizations")
+      .select("organization_type")
+      .eq("id", organizationId)
+      .maybeSingle(),
+    client
+      .from("supplier_profiles")
+      .select("verification_status")
+      .eq("organization_id", organizationId)
+      .maybeSingle(),
+  ]);
+  if (organizationResult.error) throw mapError(organizationResult.error);
+  if (profileResult.error) throw mapError(profileResult.error);
+  if (
+    organizationResult.data?.organization_type !== "supplier" ||
+    profileResult.data?.verification_status !== "approved"
+  ) {
+    throw new WorkspaceError("permission");
+  }
 }
 
 export function workspaceErrorMessage(error: unknown): string {
@@ -270,6 +318,29 @@ export async function setCatalogOfferPublished(
     .from("catalog_offers")
     .update({ is_published: isPublished })
     .eq("id", offerId)
+    .select(OFFER_COLUMNS)
+    .single();
+  return unwrap(data, error);
+}
+
+export async function updateCatalogOfferTerms(
+  client: WorkspaceClient,
+  organizationId: string,
+  offerId: string,
+  input: CatalogOfferTerms,
+): Promise<CatalogOfferRow> {
+  if (validateCatalogOfferTerms(input)) throw new WorkspaceError("invalid");
+  await assertSupplierCatalogEditAccess(client, organizationId);
+
+  const { data, error } = await client
+    .from("catalog_offers")
+    .update({
+      price_amount: input.priceAmount,
+      currency: input.currency,
+      availability: input.availability,
+    })
+    .eq("id", offerId)
+    .eq("supplier_organization_id", organizationId)
     .select(OFFER_COLUMNS)
     .single();
   return unwrap(data, error);

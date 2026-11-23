@@ -1,6 +1,6 @@
 begin;
 
-select plan(54);
+select plan(68);
 
 -- Synthetic identities only. This test is meant for `supabase test db` on the
 -- local Supabase stack; it never connects to a hosted project.
@@ -185,11 +185,14 @@ select throws_ok(
   null,
   'supplier owner cannot self-approve its verification status'
 );
-update public.catalog_offers
-set is_published = true
-where id = '40000000-0000-4000-8000-000000000003';
+select lives_ok(
+  $$update public.catalog_offers set is_published = true, price_amount = 950, currency = 'PLN', availability = 'out_of_stock' where id = '40000000-0000-4000-8000-000000000003'$$,
+  'pending supplier cannot publish or update price and availability before approval'
+);
 select is((select is_published from public.catalog_offers where id = '40000000-0000-4000-8000-000000000003'), false, 'pending supplier cannot publish an offer');
 reset role;
+select is((select price_amount from public.catalog_offers where id = '40000000-0000-4000-8000-000000000003'), 900::numeric, 'unapproved supplier price edit leaves the offer unchanged');
+select is((select availability from public.catalog_offers where id = '40000000-0000-4000-8000-000000000003'), 'low_stock', 'unapproved supplier availability edit leaves the offer unchanged');
 
 select ok(
   (select bool_and(c.relrowsecurity) from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -249,10 +252,27 @@ select ok(
   and not has_table_privilege('authenticated', 'public.organization_memberships', 'UPDATE')
   and not has_table_privilege('authenticated', 'public.organization_memberships', 'DELETE')
   and has_column_privilege('authenticated', 'public.catalog_offers', 'is_published', 'UPDATE')
+  and has_column_privilege('authenticated', 'public.catalog_offers', 'price_amount', 'UPDATE')
+  and has_column_privilege('authenticated', 'public.catalog_offers', 'currency', 'UPDATE')
+  and has_column_privilege('authenticated', 'public.catalog_offers', 'availability', 'UPDATE')
   and not has_column_privilege('authenticated', 'public.catalog_offers', 'title', 'UPDATE')
-  and not has_column_privilege('authenticated', 'public.catalog_offers', 'price_amount', 'UPDATE')
-  and not has_column_privilege('authenticated', 'public.catalog_offers', 'supplier_organization_id', 'UPDATE'),
-  'authenticated grants are bounded to intended tenant operations and protected columns'
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'moq', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'supplier_organization_id', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'price_observed_at', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'availability_observed_at', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'version', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'id', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'supplier_sku', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'category', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'sell_unit_label', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'units_per_sell_unit', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'pack_amount', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'pack_base_unit', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'order_step', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'price_valid_until', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'created_at', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'updated_at', 'UPDATE'),
+  'authenticated grants allow only approved catalog terms and retain protected offer columns'
 );
 
 set local role authenticated;
@@ -317,12 +337,15 @@ select lives_ok(
 select is((select is_published from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), true, 'approved supplier offer is published');
 select is((select version from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 3, 'catalog publication changes increment offer version');
 select ok((select updated_at > created_at from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'catalog publication changes advance updated_at');
-select throws_ok(
-  $$update public.catalog_offers set price_amount = 3300 where id = '40000000-0000-4000-8000-000000000001'$$,
-  '42501',
-  null,
-  'catalog operator cannot change price without the corresponding column grant'
+select lives_ok(
+  $$update public.catalog_offers set price_amount = 3300, currency = 'PLN', availability = 'low_stock' where id = '40000000-0000-4000-8000-000000000001'$$,
+  'approved supplier catalog operator can update its own offer price and availability'
 );
+select is((select price_amount from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 3300::numeric, 'own offer price update persists');
+select is((select currency from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'PLN', 'own offer currency update persists without imposing a market default');
+select is((select availability from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'low_stock', 'own offer availability update persists');
+select is((select version from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 4, 'price and availability update increments offer version');
+select ok((select price_observed_at > created_at and availability_observed_at > created_at from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'price and availability edits advance their server-maintained observation timestamps');
 select throws_ok(
   $$update public.catalog_offers set supplier_organization_id = '20000000-0000-4000-8000-000000000004' where id = '40000000-0000-4000-8000-000000000001'$$,
   '42501',
@@ -332,13 +355,26 @@ select throws_ok(
 reset role;
 
 set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000004', true);
+select lives_ok(
+  $$update public.catalog_offers set price_amount = 3400, currency = 'PLN', availability = 'out_of_stock' where id = '40000000-0000-4000-8000-000000000001'$$,
+  'supplier from another tenant cannot update the approved supplier offer'
+);
+reset role;
+select is((select price_amount from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 3300::numeric, 'cross-tenant price edit leaves the offer unchanged');
+select is((select currency from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'PLN', 'cross-tenant currency edit leaves the offer unchanged');
+select is((select availability from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'low_stock', 'cross-tenant availability edit leaves the offer unchanged');
+
+set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
 select lives_ok(
-  $$update public.catalog_offers set is_published = false where id = '40000000-0000-4000-8000-000000000001'$$,
+  $$update public.catalog_offers set is_published = false, price_amount = 3400, currency = 'PLN', availability = 'out_of_stock' where id = '40000000-0000-4000-8000-000000000001'$$,
   'order operator cannot modify catalog offers; RLS filters the row'
 );
 reset role;
 select is((select is_published from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), true, 'order-operator attempt leaves the published catalog offer unchanged');
+select is((select price_amount from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 3300::numeric, 'order operator cannot update offer price');
+select is((select availability from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'low_stock', 'order operator cannot update offer availability');
 
 select * from finish();
 rollback;
