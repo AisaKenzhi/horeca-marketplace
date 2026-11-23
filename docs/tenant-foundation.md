@@ -12,6 +12,8 @@ This slice adds an opt-in Supabase-backed account workspace alongside the existi
 
 The shared authenticated catalog follows the existing domain model's cross-supplier catalog. Pending suppliers can save drafts but cannot publish. A narrow internal helper reads only the approval status to enforce this gate without recursively applying profile RLS. This does not create an anonymous public storefront, certify a supplier beyond the explicit review status, validate a price, accept an order, or promise stock/delivery.
 
+Catalog write grants in this slice intentionally allow draft insertion and publication-state changes only. Editing an existing offer's title, price, currency, availability, or supplier assignment is not yet granted; the local policy tests assert that those writes remain denied.
+
 ## Security boundary
 
 Every table in `public` has RLS enabled. The migration revokes client table grants and grants back only the exact operations/columns required by onboarding and catalog discovery. `anon` gets no table grants. Membership roles are read from protected database rows; editable Auth user metadata and client-supplied role claims are not used for authorization. `private.has_org_role` is `SECURITY INVOKER` and executable by authenticated users for RLS checks. `private.add_organization_owner` is a trigger-only `SECURITY DEFINER` routine with no client execute grant. `private.is_approved_supplier` is a narrowly scoped `SECURITY DEFINER` predicate that requires `auth.uid()` and reveals only an approval boolean; only authenticated users can execute it. All three helpers are outside the Data API because the `private` schema is not in the API allow-list.
@@ -29,9 +31,11 @@ npx supabase test db
 npx supabase status
 ```
 
+`supabase/seed.sql` is intentionally empty: repeatable test identities and rows are created inside the pgTAP transaction and rolled back. The config test checks that every configured seed path exists.
+
 Copy the local API URL and public anon/publishable key from `supabase status` into an ignored `.env.local` file as `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (or use `VITE_SUPABASE_ANON_KEY` for compatibility), then restart Vite. Never use `supabase link`, `supabase db push`, a hosted database URL, a service-role key, or a production project as part of this local test flow. A hosted deployment and hosted migration have not been configured or run.
 
-The SQL policy suite is `supabase/tests/tenant_catalog_rls.test.sql` (25 pgTAP assertions). It exercises organization and location isolation, the owner bootstrap trigger, function/table grants, anonymous denial, approved-only published catalog visibility, pending supplier protections, and catalog-vs-order-operator permissions with synthetic identities. It must be run on the local Supabase stack before treating the database layer as verified.
+The SQL policy suite is `supabase/tests/tenant_catalog_rls.test.sql` (54 pgTAP assertions). It checks RLS on all five public tables, anonymous table/column grants, bounded authenticated privileges, tenant isolation, authenticated organization creation and creator binding, buyer-location operations, supplier-profile edits and self-approval denial, approved-supplier publication/versioning, offer reassignment and price-edit denial, and catalog-vs-order-operator permissions using synthetic identities. `.github/workflows/supabase-db.yml` runs the migration and this suite against a fresh local Postgres instance on pushes and pull requests; it uses no hosted project or secrets. The suite has not been executed locally in this environment, so wait for the CI run before treating the database layer as verified.
 
 ## Deliberately not included
 

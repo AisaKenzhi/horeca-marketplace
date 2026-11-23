@@ -1,6 +1,6 @@
 begin;
 
-select plan(46);
+select plan(54);
 
 -- Synthetic identities only. This test is meant for `supabase test db` on the
 -- local Supabase stack; it never connects to a hosted project.
@@ -75,7 +75,9 @@ select ok(
   'internal definer functions have only their intended execution grants'
 );
 select ok(
-  not has_table_privilege('authenticated', 'public.organization_memberships', 'INSERT,UPDATE,DELETE'),
+  not has_table_privilege('authenticated', 'public.organization_memberships', 'INSERT')
+    and not has_table_privilege('authenticated', 'public.organization_memberships', 'UPDATE')
+    and not has_table_privilege('authenticated', 'public.organization_memberships', 'DELETE'),
   'authenticated users cannot write or escalate organization memberships directly'
 );
 select is(
@@ -83,6 +85,33 @@ select is(
   1,
   'organization creation atomically provisions exactly one owner membership'
 );
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
+select lives_ok(
+  $$insert into public.organizations (id, name, organization_type, created_by) values ('20000000-0000-4000-8000-000000000005', 'New Buyer', 'buyer', auth.uid())$$,
+  'authenticated user can create an organization for itself'
+);
+select is(
+  (select created_by from public.organizations where id = '20000000-0000-4000-8000-000000000005'),
+  '10000000-0000-4000-8000-000000000006'::uuid,
+  'new organization records the authenticated creator'
+);
+select is(
+  (select count(*)::integer from public.organization_memberships where organization_id = '20000000-0000-4000-8000-000000000005' and user_id = '10000000-0000-4000-8000-000000000006' and role = 'owner'),
+  1,
+  'new organization receives its creator as owner'
+);
+select throws_ok(
+  $$insert into public.organizations (id, name, organization_type, created_by) values ('20000000-0000-4000-8000-000000000006', 'Forged Buyer', 'buyer', '10000000-0000-4000-8000-000000000001')$$,
+  '42501', 'authenticated user cannot forge another organization creator'
+);
+select is(
+  (select count(*)::integer from public.organizations where id = '20000000-0000-4000-8000-000000000006'),
+  0,
+  'forged organization creation leaves no row'
+);
+reset role;
 
 set local role anon;
 select set_config('request.jwt.claim.sub', '', true);
@@ -154,19 +183,59 @@ select ok(
   'RLS is enabled on all five exposed public tables'
 );
 select ok(
-  not has_table_privilege('anon', 'public.buyer_locations', 'SELECT,INSERT,UPDATE,DELETE')
-  and not has_table_privilege('anon', 'public.supplier_profiles', 'SELECT,INSERT,UPDATE,DELETE')
-  and not has_table_privilege('anon', 'public.organization_memberships', 'SELECT,INSERT,UPDATE,DELETE'),
-  'anon has no privileges on remaining exposed tenant tables'
+  not has_table_privilege('anon', 'public.organizations', 'SELECT')
+  and not has_table_privilege('anon', 'public.organizations', 'INSERT')
+  and not has_table_privilege('anon', 'public.organizations', 'UPDATE')
+  and not has_table_privilege('anon', 'public.organizations', 'DELETE')
+  and not has_table_privilege('anon', 'public.organization_memberships', 'SELECT')
+  and not has_table_privilege('anon', 'public.organization_memberships', 'INSERT')
+  and not has_table_privilege('anon', 'public.organization_memberships', 'UPDATE')
+  and not has_table_privilege('anon', 'public.organization_memberships', 'DELETE')
+  and not has_table_privilege('anon', 'public.buyer_locations', 'SELECT')
+  and not has_table_privilege('anon', 'public.buyer_locations', 'INSERT')
+  and not has_table_privilege('anon', 'public.buyer_locations', 'UPDATE')
+  and not has_table_privilege('anon', 'public.buyer_locations', 'DELETE')
+  and not has_table_privilege('anon', 'public.supplier_profiles', 'SELECT')
+  and not has_table_privilege('anon', 'public.supplier_profiles', 'INSERT')
+  and not has_table_privilege('anon', 'public.supplier_profiles', 'UPDATE')
+  and not has_table_privilege('anon', 'public.supplier_profiles', 'DELETE')
+  and not has_table_privilege('anon', 'public.catalog_offers', 'SELECT')
+  and not has_table_privilege('anon', 'public.catalog_offers', 'INSERT')
+  and not has_table_privilege('anon', 'public.catalog_offers', 'UPDATE')
+  and not has_table_privilege('anon', 'public.catalog_offers', 'DELETE')
+  and not has_any_column_privilege('anon', 'public.organizations', 'SELECT')
+  and not has_any_column_privilege('anon', 'public.organizations', 'INSERT')
+  and not has_any_column_privilege('anon', 'public.organizations', 'UPDATE')
+  and not has_any_column_privilege('anon', 'public.organization_memberships', 'SELECT')
+  and not has_any_column_privilege('anon', 'public.organization_memberships', 'INSERT')
+  and not has_any_column_privilege('anon', 'public.organization_memberships', 'UPDATE')
+  and not has_any_column_privilege('anon', 'public.buyer_locations', 'SELECT')
+  and not has_any_column_privilege('anon', 'public.buyer_locations', 'INSERT')
+  and not has_any_column_privilege('anon', 'public.buyer_locations', 'UPDATE')
+  and not has_any_column_privilege('anon', 'public.supplier_profiles', 'SELECT')
+  and not has_any_column_privilege('anon', 'public.supplier_profiles', 'INSERT')
+  and not has_any_column_privilege('anon', 'public.supplier_profiles', 'UPDATE')
+  and not has_any_column_privilege('anon', 'public.catalog_offers', 'SELECT')
+  and not has_any_column_privilege('anon', 'public.catalog_offers', 'INSERT')
+  and not has_any_column_privilege('anon', 'public.catalog_offers', 'UPDATE'),
+  'anon has no table or column grants on any exposed tenant table'
 );
 select ok(
-  has_table_privilege('authenticated', 'public.buyer_locations', 'SELECT,DELETE')
+  has_table_privilege('authenticated', 'public.buyer_locations', 'SELECT')
+  and has_table_privilege('authenticated', 'public.buyer_locations', 'DELETE')
   and has_column_privilege('authenticated', 'public.buyer_locations', 'organization_id', 'INSERT')
   and not has_column_privilege('authenticated', 'public.buyer_locations', 'organization_id', 'UPDATE')
+  and not has_table_privilege('authenticated', 'public.buyer_locations', 'INSERT')
+  and not has_table_privilege('authenticated', 'public.buyer_locations', 'UPDATE')
   and has_column_privilege('authenticated', 'public.supplier_profiles', 'display_name', 'UPDATE')
   and not has_column_privilege('authenticated', 'public.supplier_profiles', 'verification_status', 'UPDATE')
-  and not has_table_privilege('authenticated', 'public.organization_memberships', 'INSERT,UPDATE,DELETE')
-  and not has_table_privilege('authenticated', 'public.catalog_offers', 'UPDATE'),
+  and not has_table_privilege('authenticated', 'public.organization_memberships', 'INSERT')
+  and not has_table_privilege('authenticated', 'public.organization_memberships', 'UPDATE')
+  and not has_table_privilege('authenticated', 'public.organization_memberships', 'DELETE')
+  and has_column_privilege('authenticated', 'public.catalog_offers', 'is_published', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'title', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'price_amount', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.catalog_offers', 'supplier_organization_id', 'UPDATE'),
   'authenticated grants are bounded to intended tenant operations and protected columns'
 );
 
@@ -188,7 +257,7 @@ select lives_ok(
 select is((select count(*)::integer from public.buyer_locations where id = '30000000-0000-4000-8000-000000000001'), 0, 'own location deletion persists');
 select throws_ok(
   $$update public.buyer_locations set organization_id = '20000000-0000-4000-8000-000000000002' where id = '30000000-0000-4000-8000-000000000001'$$,
-  '42501', null, 'buyer cannot change a location tenant assignment'
+  '42501', 'buyer cannot change a location tenant assignment'
 );
 reset role;
 
@@ -196,7 +265,7 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000003', true);
 select throws_ok(
   $$insert into public.buyer_locations (organization_id, name, address) values ('20000000-0000-4000-8000-000000000001', 'Supplier location', 'Synthetic address')$$,
-  '42501', null, 'supplier owner cannot create a buyer location'
+  '42501', 'supplier owner cannot create a buyer location'
 );
 reset role;
 
@@ -207,39 +276,45 @@ select lives_ok(
   'supplier owner can update its profile display name'
 );
 select is((select display_name from public.supplier_profiles where organization_id = '20000000-0000-4000-8000-000000000004'), 'Supplier Two Updated', 'supplier profile display name update persists');
-select throws_ok(
+select lives_ok(
   $$update public.supplier_profiles set display_name = 'Forged' where organization_id = '20000000-0000-4000-8000-000000000003'$$,
-  '42501', null, 'supplier owner cannot modify another supplier profile'
-);
-select throws_ok(
-  $$update public.supplier_profiles set verification_status = 'approved' where organization_id = '20000000-0000-4000-8000-000000000004'$$,
-  '42501', null, 'supplier owner cannot self-approve its profile'
+  'supplier cannot edit a foreign profile; RLS filters the row'
 );
 reset role;
+select is((select display_name from public.supplier_profiles where organization_id = '20000000-0000-4000-8000-000000000003'), 'Supplier One', 'foreign supplier profile remains unchanged after attempted edit');
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
 select lives_ok(
-  $$update public.catalog_offers set title = 'Published flour updated', price_amount = 3300, currency = 'PLN' where id = '40000000-0000-4000-8000-000000000001'$$,
-  'approved supplier catalog operator can update ordinary offer and price fields'
+  $$update public.catalog_offers set is_published = false where id = '40000000-0000-4000-8000-000000000001'$$,
+  'approved supplier catalog operator can unpublish its offer'
 );
-select is((select title from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'Published flour updated', 'ordinary offer update persists');
-select is((select version from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 2, 'catalog edit increments offer version');
-select ok((select updated_at > created_at from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'catalog edit advances updated_at');
-select ok((select price_observed_at > created_at from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'price change advances price observation timestamp');
+select is((select is_published from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), false, 'offer publication state update persists');
+select lives_ok(
+  $$update public.catalog_offers set is_published = true where id = '40000000-0000-4000-8000-000000000001'$$,
+  'approved supplier catalog operator can publish its offer'
+);
+select is((select is_published from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), true, 'approved supplier offer is published');
+select is((select version from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 3, 'catalog publication changes increment offer version');
+select ok((select updated_at > created_at from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'catalog publication changes advance updated_at');
+select throws_ok(
+  $$update public.catalog_offers set price_amount = 3300 where id = '40000000-0000-4000-8000-000000000001'$$,
+  '42501', 'catalog operator cannot change price without the corresponding column grant'
+);
 select throws_ok(
   $$update public.catalog_offers set supplier_organization_id = '20000000-0000-4000-8000-000000000004' where id = '40000000-0000-4000-8000-000000000001'$$,
-  '42501', null, 'catalog operator cannot reassign an offer to another supplier tenant'
+  '42501', 'catalog operator cannot reassign an offer to another supplier tenant'
 );
 reset role;
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
-select throws_ok(
+select lives_ok(
   $$update public.catalog_offers set is_published = false where id = '40000000-0000-4000-8000-000000000001'$$,
-  '42501', null, 'order operator cannot modify catalog offers'
+  'order operator cannot modify catalog offers; RLS filters the row'
 );
 reset role;
+select is((select is_published from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), true, 'order-operator attempt leaves the published catalog offer unchanged');
 
 select * from finish();
 rollback;
