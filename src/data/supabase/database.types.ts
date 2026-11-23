@@ -90,11 +90,7 @@ export type Database = {
         },
         never
       >;
-      organization_memberships: Table<
-        OrganizationMembershipRow,
-        never,
-        never
-      >;
+      organization_memberships: Table<OrganizationMembershipRow, never, never>;
       buyer_locations: Table<
         BuyerLocationRow,
         {

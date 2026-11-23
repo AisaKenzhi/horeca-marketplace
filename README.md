@@ -1,13 +1,16 @@
 # HoReCa Marketplace — P0 prototype
 
-A private, local prototype of a B2B procurement marketplace for HoReCa
-(hotels, restaurants, catering) suppliers and buyers. It demonstrates the buyer
-→ supplier → explicit-decision flow on **synthetic demo data only**.
+A private prototype of a B2B procurement marketplace for HoReCa (hotels,
+restaurants, catering) suppliers and buyers. The original buyer → supplier →
+explicit-decision demo still runs on **synthetic in-browser data**. An opt-in
+`/account` slice adds Supabase Auth and persistent organizations, buyer locations,
+supplier profiles and a small authenticated catalog when configured.
 
-> **This is not a live marketplace.** No payments, no messaging, no public
-> storefront, no real orders, no production integrations. Everything runs in the
-> browser and nothing is sent anywhere. The market is not empty — established
-> players exist; any differentiation here is a hypothesis to test, not a claim.
+> **This is not a live marketplace.** The account slice is a technical foundation,
+> not business verification or a launch. It does not create orders, process
+> payments, send messages, or integrate delivery. With Supabase variables absent,
+> the app makes no backend calls. The market is not empty — established players
+> exist; any differentiation here is a hypothesis to test, not a claim.
 
 ---
 
@@ -120,12 +123,18 @@ First E2E run may need a browser: `npm run e2e:install` (Chromium).
 
 - No payment/checkout/escrow/split payment or financial data.
 - No email/SMS/push/WhatsApp/Telegram; notifications are a local demo inbox.
-- No public catalog or deployment; the storefront is `draft_demo`.
+- No anonymous public storefront or production deployment; explicitly published
+  offers are visible only to authenticated users, and supplier review remains
+  pending until an operator workflow exists.
 - No logistics, routing or cold-chain features.
-- No real onboarding; personas are demo switches, not authentication.
+- Demo personas remain switches, not authentication. The optional `/account`
+  route uses Supabase Auth; invitations, role administration and business identity
+  verification are not implemented.
 - No XLSX/ERP/1C import (CSV only, local and validated).
 
-See `docs/product-scope.md`, `docs/adr.md` and `docs/security.md`.
+See `docs/product-scope.md`, `docs/adr.md`, `docs/security.md` and
+[`docs/tenant-foundation.md`](docs/tenant-foundation.md) for the account, RLS and
+local database setup details.
 Deployability and the honest launch-gate status are in
 `docs/deploy-readiness.md` (with static-host templates under `deploy/`).
 
@@ -137,10 +146,11 @@ Deployability and the honest launch-gate status are in
 src/
   domain/     Pure, tested business rules (money, packaging, freshness,
               cart, order lifecycle, revisions, authorization, reorder, CSV)
-  data/       In-browser repository, storage wrapper, synthetic seed
+  data/       In-browser repository, storage wrapper, synthetic seed, Supabase access
   app/        Store/context, routing shell, i18n
   components/ Shared presentational primitives
-  features/   buyer/, supplier/, operator/, session/ vertical slices
+  features/   buyer/, supplier/, operator/, session/, account/ vertical slices
+supabase/     Local config, versioned SQL migrations and pgTAP RLS tests
 tests/        Vitest unit + component tests and fixtures
 e2e/          Playwright end-to-end scenarios
 docs/         ADRs, product scope, security notes
@@ -157,20 +167,25 @@ docs/         ADRs, product scope, security notes
   guessed-id not-found, keyboard access, stale/unknown flagging. Runs on desktop
   and a mobile viewport.
 
-State lives in memory for the page lifetime. E2E tests navigate with in-app links
-because a full page reload resets demo state.
+Demo state lives in memory for the page lifetime; when configured, the separate
+`/account` workspace persists data in Supabase. E2E demo tests navigate with in-app
+links because a full page reload resets demo state.
 
 ## Configuration
 
-Copy `.env.example` to `.env` for local overrides. All values are non-secret
-demo defaults:
+Copy `.env.example` to an ignored `.env.local` for local overrides. Vite-prefixed
+values are shipped to the browser; Supabase settings may contain only the project
+URL and public anon/publishable key, never a service-role or secret key.
 
 - `VITE_DEFAULT_LOCALE` (default `ru`)
 - `VITE_STALENESS_HOURS` (default `24`)
 
-Supabase variables exist but are unused: the prototype never connects to any
-database. Never put real credentials or a `service_role` key in any committed
-file or in the browser bundle.
+Without `VITE_SUPABASE_URL` and either `VITE_SUPABASE_PUBLISHABLE_KEY` or the
+legacy `VITE_SUPABASE_ANON_KEY`, `/account` explains that the optional backend is
+not configured and the app stays in demo mode. With a URL and one of those public
+keys, that route uses Supabase Auth and RLS-backed data. Local database setup and
+the tenant security model are documented in `docs/tenant-foundation.md`; no hosted
+database has been linked or migrated.
 
 ## Status and limits
 

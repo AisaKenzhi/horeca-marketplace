@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { useApp } from "@/app/store";
 import { Notice } from "@/components/primitives";
@@ -13,6 +13,11 @@ import { AuditPage } from "@/features/operator/AuditPage";
 import { NotificationsPage } from "@/features/buyer/NotificationsPage";
 import { PersonaSwitcher } from "@/features/session/PersonaSwitcher";
 import { isBuyerSide, isPlatformSide, isSupplierSide } from "@/domain/authorization";
+
+const AccountWorkspace = lazy(async () => {
+  const module = await import("@/features/account/AccountWorkspace");
+  return { default: module.AccountWorkspace };
+});
 
 function BuyerNav({ m }: { m: ReturnType<typeof useApp>["messages"] }): ReactNode {
   return (
@@ -72,7 +77,7 @@ function Home(): ReactNode {
   );
 }
 
-export function App(): ReactNode {
+function DemoApp(): ReactNode {
   const { messages } = useApp();
   const { membership } = useApp();
   const [navOpen, setNavOpen] = useState(false);
@@ -113,6 +118,9 @@ export function App(): ReactNode {
           <NavLink to="/" className="nav-link" end>
             Главная
           </NavLink>
+          <NavLink to="/account" className="nav-link">
+            Рабочий аккаунт
+          </NavLink>
           {nav}
         </nav>
         <PersonaSwitcher />
@@ -147,5 +155,27 @@ export function App(): ReactNode {
         {isBuyerSide(membership) ? null : null}
       </footer>
     </div>
+  );
+}
+
+export function App(): ReactNode {
+  return (
+    <Routes>
+      <Route
+        path="/account/*"
+        element={
+          <Suspense
+            fallback={
+              <main className="account-page">
+                <p className="loading">Открываем рабочий контур…</p>
+              </main>
+            }
+          >
+            <AccountWorkspace />
+          </Suspense>
+        }
+      />
+      <Route path="*" element={<DemoApp />} />
+    </Routes>
   );
 }
