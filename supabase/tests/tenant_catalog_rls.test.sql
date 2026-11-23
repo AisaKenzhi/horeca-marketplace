@@ -1,6 +1,6 @@
 begin;
 
-select plan(25);
+select plan(46);
 
 -- Synthetic identities only. This test is meant for `supabase test db` on the
 -- local Supabase stack; it never connects to a hosted project.
@@ -144,6 +144,101 @@ update public.catalog_offers
 set is_published = true
 where id = '40000000-0000-4000-8000-000000000003';
 select is((select is_published from public.catalog_offers where id = '40000000-0000-4000-8000-000000000003'), false, 'pending supplier cannot publish an offer');
+reset role;
+
+select ok(
+  (select bool_and(c.relrowsecurity) from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public' and c.relname in ('organizations', 'organization_memberships', 'buyer_locations', 'supplier_profiles', 'catalog_offers'))
+  and (select count(*) = 5 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public' and c.relname in ('organizations', 'organization_memberships', 'buyer_locations', 'supplier_profiles', 'catalog_offers')),
+  'RLS is enabled on all five exposed public tables'
+);
+select ok(
+  not has_table_privilege('anon', 'public.buyer_locations', 'SELECT,INSERT,UPDATE,DELETE')
+  and not has_table_privilege('anon', 'public.supplier_profiles', 'SELECT,INSERT,UPDATE,DELETE')
+  and not has_table_privilege('anon', 'public.organization_memberships', 'SELECT,INSERT,UPDATE,DELETE'),
+  'anon has no privileges on remaining exposed tenant tables'
+);
+select ok(
+  has_table_privilege('authenticated', 'public.buyer_locations', 'SELECT,DELETE')
+  and has_column_privilege('authenticated', 'public.buyer_locations', 'organization_id', 'INSERT')
+  and not has_column_privilege('authenticated', 'public.buyer_locations', 'organization_id', 'UPDATE')
+  and has_column_privilege('authenticated', 'public.supplier_profiles', 'display_name', 'UPDATE')
+  and not has_column_privilege('authenticated', 'public.supplier_profiles', 'verification_status', 'UPDATE')
+  and not has_table_privilege('authenticated', 'public.organization_memberships', 'INSERT,UPDATE,DELETE')
+  and not has_table_privilege('authenticated', 'public.catalog_offers', 'UPDATE'),
+  'authenticated grants are bounded to intended tenant operations and protected columns'
+);
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000001', true);
+select lives_ok(
+  $$insert into public.buyer_locations (organization_id, name, address) values ('20000000-0000-4000-8000-000000000001', 'Kitchen C', 'Synthetic address C')$$,
+  'buyer owner can add a location within its own organization'
+);
+select lives_ok(
+  $$update public.buyer_locations set name = 'Kitchen A Updated' where id = '30000000-0000-4000-8000-000000000001'$$,
+  'buyer owner can update a location within its own organization'
+);
+select is((select name from public.buyer_locations where id = '30000000-0000-4000-8000-000000000001'), 'Kitchen A Updated', 'own location update persists');
+select lives_ok(
+  $$delete from public.buyer_locations where id = '30000000-0000-4000-8000-000000000001'$$,
+  'buyer owner can delete a location within its own organization'
+);
+select is((select count(*)::integer from public.buyer_locations where id = '30000000-0000-4000-8000-000000000001'), 0, 'own location deletion persists');
+select throws_ok(
+  $$update public.buyer_locations set organization_id = '20000000-0000-4000-8000-000000000002' where id = '30000000-0000-4000-8000-000000000001'$$,
+  '42501', null, 'buyer cannot change a location tenant assignment'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000003', true);
+select throws_ok(
+  $$insert into public.buyer_locations (organization_id, name, address) values ('20000000-0000-4000-8000-000000000001', 'Supplier location', 'Synthetic address')$$,
+  '42501', null, 'supplier owner cannot create a buyer location'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000004', true);
+select lives_ok(
+  $$update public.supplier_profiles set display_name = 'Supplier Two Updated' where organization_id = '20000000-0000-4000-8000-000000000004'$$,
+  'supplier owner can update its profile display name'
+);
+select is((select display_name from public.supplier_profiles where organization_id = '20000000-0000-4000-8000-000000000004'), 'Supplier Two Updated', 'supplier profile display name update persists');
+select throws_ok(
+  $$update public.supplier_profiles set display_name = 'Forged' where organization_id = '20000000-0000-4000-8000-000000000003'$$,
+  '42501', null, 'supplier owner cannot modify another supplier profile'
+);
+select throws_ok(
+  $$update public.supplier_profiles set verification_status = 'approved' where organization_id = '20000000-0000-4000-8000-000000000004'$$,
+  '42501', null, 'supplier owner cannot self-approve its profile'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000005', true);
+select lives_ok(
+  $$update public.catalog_offers set title = 'Published flour updated', price_amount = 3300, currency = 'PLN' where id = '40000000-0000-4000-8000-000000000001'$$,
+  'approved supplier catalog operator can update ordinary offer and price fields'
+);
+select is((select title from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'Published flour updated', 'ordinary offer update persists');
+select is((select version from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 2, 'catalog edit increments offer version');
+select ok((select updated_at > created_at from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'catalog edit advances updated_at');
+select ok((select price_observed_at > created_at from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'price change advances price observation timestamp');
+select throws_ok(
+  $$update public.catalog_offers set supplier_organization_id = '20000000-0000-4000-8000-000000000004' where id = '40000000-0000-4000-8000-000000000001'$$,
+  '42501', null, 'catalog operator cannot reassign an offer to another supplier tenant'
+);
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
+select throws_ok(
+  $$update public.catalog_offers set is_published = false where id = '40000000-0000-4000-8000-000000000001'$$,
+  '42501', null, 'order operator cannot modify catalog offers'
+);
 reset role;
 
 select * from finish();
