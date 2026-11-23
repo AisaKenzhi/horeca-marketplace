@@ -89,25 +89,27 @@ select is(
 set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006', true);
 select lives_ok(
-  $$insert into public.organizations (id, name, organization_type, created_by) values ('20000000-0000-4000-8000-000000000005', 'New Buyer', 'buyer', auth.uid())$$,
+  $$insert into public.organizations (name, organization_type, created_by) values ('New Buyer', 'buyer', auth.uid())$$,
   'authenticated user can create an organization for itself'
 );
 select is(
-  (select created_by from public.organizations where id = '20000000-0000-4000-8000-000000000005'),
+  (select created_by from public.organizations where created_by = auth.uid() and name = 'New Buyer'),
   '10000000-0000-4000-8000-000000000006'::uuid,
   'new organization records the authenticated creator'
 );
 select is(
-  (select count(*)::integer from public.organization_memberships where organization_id = '20000000-0000-4000-8000-000000000005' and user_id = '10000000-0000-4000-8000-000000000006' and role = 'owner'),
+  (select count(*)::integer from public.organization_memberships where organization_id = (select id from public.organizations where created_by = auth.uid() and name = 'New Buyer') and user_id = auth.uid() and role = 'owner'),
   1,
   'new organization receives its creator as owner'
 );
 select throws_ok(
-  $$insert into public.organizations (id, name, organization_type, created_by) values ('20000000-0000-4000-8000-000000000006', 'Forged Buyer', 'buyer', '10000000-0000-4000-8000-000000000001')$$,
-  '42501', 'authenticated user cannot forge another organization creator'
+  $$insert into public.organizations (name, organization_type, created_by) values ('Forged Buyer', 'buyer', '10000000-0000-4000-8000-000000000001')$$,
+  '42501',
+  null,
+  'authenticated user cannot forge another organization creator'
 );
 select is(
-  (select count(*)::integer from public.organizations where id = '20000000-0000-4000-8000-000000000006'),
+  (select count(*)::integer from public.organizations where name = 'Forged Buyer' and created_by = '10000000-0000-4000-8000-000000000001'),
   0,
   'forged organization creation leaves no row'
 );
@@ -115,8 +117,18 @@ reset role;
 
 set local role anon;
 select set_config('request.jwt.claim.sub', '', true);
-select is((select count(*)::integer from public.organizations), 0, 'anonymous user sees no organizations');
-select is((select count(*)::integer from public.catalog_offers), 0, 'anonymous user sees no published or private catalog rows');
+select throws_ok(
+  $$select * from public.organizations$$,
+  '42501',
+  null,
+  'anonymous user cannot query organizations without a table grant'
+);
+select throws_ok(
+  $$select * from public.catalog_offers$$,
+  '42501',
+  null,
+  'anonymous user cannot query catalog offers without a table grant'
+);
 reset role;
 
 set local role authenticated;
@@ -134,6 +146,7 @@ select is((select count(*)::integer from public.supplier_profiles where organiza
 select throws_ok(
   $$insert into public.buyer_locations (organization_id, name, address) values ('20000000-0000-4000-8000-000000000002', 'Forged kitchen', 'Synthetic foreign address')$$,
   '42501',
+  null,
   'buyer cannot write a location under a foreign tenant id'
 );
 reset role;
@@ -148,6 +161,7 @@ select lives_ok(
 select throws_ok(
   $$insert into public.catalog_offers (supplier_organization_id, supplier_sku, title, category, sell_unit_label, units_per_sell_unit, pack_amount, pack_base_unit, price_amount, currency, moq, order_step, availability) values ('20000000-0000-4000-8000-000000000004', 'S2-FORGED', 'Foreign product', 'Grocery', 'case', 1, 1, 'piece', 100, 'EUR', 1, 1, 'unknown')$$,
   '42501',
+  null,
   'catalog operator cannot write to another supplier tenant'
 );
 reset role;
@@ -157,6 +171,7 @@ select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000006
 select throws_ok(
   $$insert into public.catalog_offers (supplier_organization_id, supplier_sku, title, category, sell_unit_label, units_per_sell_unit, pack_amount, pack_base_unit, price_amount, currency, moq, order_step, availability) values ('20000000-0000-4000-8000-000000000003', 'S1-FORGED', 'Unauthorized product', 'Grocery', 'case', 1, 1, 'piece', 100, 'EUR', 1, 1, 'unknown')$$,
   '42501',
+  null,
   'order operator cannot write catalog offers'
 );
 select is((select count(*)::integer from public.catalog_offers where id = '40000000-0000-4000-8000-000000000003'), 0, 'supplier member cannot read a different supplier draft');
@@ -167,6 +182,7 @@ select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000004
 select throws_ok(
   $$update public.supplier_profiles set verification_status = 'approved' where organization_id = '20000000-0000-4000-8000-000000000004'$$,
   '42501',
+  null,
   'supplier owner cannot self-approve its verification status'
 );
 update public.catalog_offers
@@ -257,7 +273,9 @@ select lives_ok(
 select is((select count(*)::integer from public.buyer_locations where id = '30000000-0000-4000-8000-000000000001'), 0, 'own location deletion persists');
 select throws_ok(
   $$update public.buyer_locations set organization_id = '20000000-0000-4000-8000-000000000002' where id = '30000000-0000-4000-8000-000000000001'$$,
-  '42501', 'buyer cannot change a location tenant assignment'
+  '42501',
+  null,
+  'buyer cannot change a location tenant assignment'
 );
 reset role;
 
@@ -265,7 +283,9 @@ set local role authenticated;
 select set_config('request.jwt.claim.sub', '10000000-0000-4000-8000-000000000003', true);
 select throws_ok(
   $$insert into public.buyer_locations (organization_id, name, address) values ('20000000-0000-4000-8000-000000000001', 'Supplier location', 'Synthetic address')$$,
-  '42501', 'supplier owner cannot create a buyer location'
+  '42501',
+  null,
+  'supplier owner cannot create a buyer location'
 );
 reset role;
 
@@ -299,11 +319,15 @@ select is((select version from public.catalog_offers where id = '40000000-0000-4
 select ok((select updated_at > created_at from public.catalog_offers where id = '40000000-0000-4000-8000-000000000001'), 'catalog publication changes advance updated_at');
 select throws_ok(
   $$update public.catalog_offers set price_amount = 3300 where id = '40000000-0000-4000-8000-000000000001'$$,
-  '42501', 'catalog operator cannot change price without the corresponding column grant'
+  '42501',
+  null,
+  'catalog operator cannot change price without the corresponding column grant'
 );
 select throws_ok(
   $$update public.catalog_offers set supplier_organization_id = '20000000-0000-4000-8000-000000000004' where id = '40000000-0000-4000-8000-000000000001'$$,
-  '42501', 'catalog operator cannot reassign an offer to another supplier tenant'
+  '42501',
+  null,
+  'catalog operator cannot reassign an offer to another supplier tenant'
 );
 reset role;
 
