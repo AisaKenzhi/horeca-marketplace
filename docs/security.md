@@ -1,48 +1,56 @@
 # Security and data-handling notes (P0)
 
-This prototype is local-only and uses synthetic data. The notes below describe
-the threat model the design anticipates and how P0 answers it, so a future
-backend can be held to the same standard.
+This prototype has two separate surfaces: a synthetic, browser-only demo and an
+opt-in `/account` workspace backed by Supabase. Unless explicitly marked
+otherwise, “P0” and “demo” below refer to the synthetic path. The account slice
+sends Auth and data requests only to its configured Supabase project and persists
+user, organization, location and catalog records under database grants and RLS;
+it is not a full marketplace backend.
 
 ## Threat model (multi-tenant marketplace)
 
-| Threat                      | P0 posture                                                                                                                               |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| Tenant / org id spoofing    | Ids from the UI are data, not authorization. Policy checks compare the caller's membership against the entity's org at every read/write. |
-| IDOR                        | Repository methods verify membership → entity ownership before acting.                                                                   |
-| Cross-supplier leakage      | A supplier suborder is readable only by the owning buyer org or that exact supplier.                                                     |
-| Privilege escalation        | Role checks are per action (`canManageProcurement`, `canEditSupplierCatalog`, ...).                                                      |
-| Unsafe import / file upload | CSV is parsed locally, size/row limited, formula-prefixed cells neutralised, no macro/HTML execution, per-row errors.                    |
-| XSS                         | React escapes by default; no `dangerouslySetInnerHTML`; CSV values are rendered as text.                                                 |
-| CSRF / SQL injection        | No server, no SQL, no cookies in P0. Modelled for the future backend.                                                                    |
-| Secret leakage              | No secrets in the repo; `.env*` ignored; service-role names blocked in gitignore; nothing is sent to the browser that shouldn't be.      |
-| Replay / races              | Fulfillment events carry an idempotency key; suborders carry a `version` for optimistic concurrency.                                     |
-| PII in logs / notifications | Audit metadata is a small non-PII bag; fixtures contain no real people, addresses or phones.                                             |
+| Threat                      | P0 posture                                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tenant / org id spoofing    | Ids from the UI are data, not authorization. Policy checks compare the caller's membership against the entity's org at every read/write.         |
+| IDOR                        | Repository methods verify membership → entity ownership before acting.                                                                           |
+| Cross-supplier leakage      | A supplier suborder is readable only by the owning buyer org or that exact supplier.                                                             |
+| Privilege escalation        | Role checks are per action (`canManageProcurement`, `canEditSupplierCatalog`, ...).                                                              |
+| Unsafe import / file upload | CSV is parsed locally, size/row limited, formula-prefixed cells neutralised, no macro/HTML execution, per-row errors.                            |
+| XSS                         | React escapes by default; no `dangerouslySetInnerHTML`; CSV values are rendered as text.                                                         |
+| CSRF / SQL injection        | Demo has no custom server endpoint. The account route uses `supabase-js` Data API calls, not raw SQL; access relies on explicit grants and RLS.  |
+| Secret leakage              | No service-role/secret key in browser config; the client may hold only the Supabase URL and publishable/legacy anon key.                         |
+| Replay / races              | Fulfillment events carry an idempotency key; suborders carry a `version` for optimistic concurrency.                                             |
+| PII in logs / notifications | Demo audit metadata is non-PII and fixtures are fictional; the account stores email and workspace data in Supabase, with no logging integration. |
 
-## P0 guarantees
+## Synthetic demo guarantees (not the account route)
 
-- No real business or personal data is stored or transmitted.
-- No network calls leave the page; no external services are contacted.
-- The "session" is a demo persona switch, explicitly labelled as not real
-  authentication.
+- The demo uses fictional data in browser memory. The optional account route may
+  store the user's email plus organization, location and catalog data in Supabase.
+- The demo path makes no backend calls. When configured, `/account` sends Auth and
+  data requests to the specified Supabase project; no other third-party service is
+  integrated.
+- The persona switch is a demo convenience, not authentication. `/account` uses
+  Supabase Auth and database RLS.
 
-## What a real product must add
+## Remaining work before any hosted product launch
 
-- Server-side enforcement of every policy check (the client rules are not a
-  security boundary once a backend exists).
-- Row-level security with deny-by-default if Supabase/PostgreSQL is used, tested
-  per role and per organisation.
-- The `service_role` key confined to a trusted server boundary, never shipped to
-  the browser.
-- Parameterized queries, transactions and optimistic locking on shared writes.
-- Rate limiting and abuse controls on any import/upload endpoint.
-- A documented data-retention and deletion strategy.
-- Reviewed audit logging that omits PII and secrets.
+- Configure hosted Auth URLs, email delivery and project rate limits; locally
+  verify the migration, RLS suite and Supabase advisors before applying anything
+  to a hosted database.
+- Add invitations, account recovery, role administration, supplier-review
+  operations, and an account deletion/retention process.
+- Keep future orders, payments, notifications and other high-risk business writes
+  behind reviewed database transactions or trusted server functions; never trust
+  demo/client checks as an authorization boundary.
+- Add abuse controls for registration and future import/upload endpoints, plus
+  reviewed audit logging that omits PII and secrets.
+- Payments, market-specific legal rules and delivery integrations remain out of
+  scope until the owner selects a business model and market.
 
 ## Hardening pass (branch `harden/p0-product-ready`)
 
-The following P0 hardening changes were made within the local, synthetic-data
-scope only. No backend, no database, no network calls.
+This section describes changes to the original local, synthetic-data demo path
+only. The optional Supabase-backed account path is separate and documented below.
 
 | Area            | Change                                                                                                                                                                                                     |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -60,10 +68,10 @@ All of the above are covered by unit/repository tests (`npm run test`) and by
 Playwright scenarios (`npm run e2e`). They run locally on synthetic data and do
 not prove that any real service, payment, or delivery works.
 
-## Expanded threat model (post-P0 hardening)
+## Expanded synthetic-demo threat model (post-P0 hardening)
 
-Each row names the prevention, the test that covers it locally, and the residual
-risk once a real backend exists.
+Each row names the local synthetic-demo prevention and test, plus remaining risks
+for a future ordering backend; account-specific facts are marked in the relevant rows.
 
 | Threat                        | Prevention (local)                                                                                                             | Covered by                                                                            | Residual risk                                                             |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -77,17 +85,33 @@ risk once a real backend exists.
 | Double submit / replay        | Idempotency keys on submit/import/reorder; fulfillment events keyed per transition                                             | `repository.test.ts`                                                                  | Needs a unique idempotency constraint server-side                         |
 | Unsafe CSV / file import      | Bounded size/rows, plain-text parse, formula/HTML neutralisation, no macro execution, atomic apply, SKU dedup                  | `catalogImport.test.ts`                                                               | Server must bound upload size/rate and never eval cells                   |
 | XSS                           | React escaping; no `dangerouslySetInnerHTML`; CSV rendered as text                                                             | code review                                                                           | CSP headers and output-encoding on the server                             |
-| CSRF / SQL injection / SSRF   | No server, no SQL, no cookies, no outbound fetch today                                                                         | n/a (modelled)                                                                        | Must be handled when a backend/import fetch exists                        |
-| Secret leakage                | No secrets in repo; `.env*` ignored; nothing sent to the browser that shouldn't be                                             | `.gitignore`, review                                                                  | Secret manager + rotation on the server                                   |
-| PII in logs/audit             | Audit metadata is a small non-PII bag; fixtures are fictional                                                                  | `errors.test.ts`, fixtures                                                            | Structured logging with redaction server-side                             |
-| Rate abuse / brute force      | Not applicable (no endpoints); import size-bounded                                                                             | n/a                                                                                   | Rate limits on registration/search/import when live                       |
+| CSRF / SQL injection / SSRF   | Demo has no custom endpoint; account calls Supabase Auth/Data API and sends no raw SQL; RLS and grants bound database access   | local pgTAP suite (not yet run)                                                       | Verify hosted RLS; no custom SSRF-capable server route is added           |
+| Secret leakage                | Frontend accepts only a Supabase URL and public publishable/legacy anon key; no service-role key is used                       | `.gitignore`, code review                                                             | Keep server secrets outside the browser and rotate them                   |
+| PII in logs/audit             | Demo fixtures are fictional; account stores email and tenant/location data but adds no logging integration                     | `errors.test.ts`, fixtures; tenant pgTAP suite (not yet run)                          | Set retention rules and redact future server-side logs                    |
+| Rate abuse / brute force      | Account signup uses Supabase Auth; local limits are configured, but hosted limits and abuse resistance are not verified        | local Supabase config only (not yet run)                                              | Configure hosted limits and test registration/search/import abuse         |
 
 ## Reliability
 
-- Retries are only for transient, idempotent operations; business errors are not
-  retried. Side effects carry an idempotency key. A conflict asks the caller to
-  re-read rather than overwrite. There is no automatic network retry because
-  there is no network.
+- The synthetic demo has no external calls. The account data layer does not
+  automatically retry network operations; errors surface in the UI, and future
+  business mutations still need explicit idempotency and transaction design.
 - Observability is **local only**: there is no connected monitoring, alerting or
-  tracing system, and none is claimed. A real deployment must add health checks,
-  error/latency/conflict metrics and correlation ids.
+  tracing system for either path, and none is claimed. A real deployment must add
+  health checks, error/latency/conflict metrics and correlation ids.
+
+## Authenticated tenant foundation
+
+The Product Ready feature branch adds a separate Supabase-backed account slice;
+the demo persona flow remains local and synthetic. `supabase/migrations/` defines
+organizations, owner memberships, buyer locations, supplier profiles and supplier
+catalog offers. RLS is enabled on every exposed application table, `anon` receives
+no grants, and authenticated table/column grants are paired with tenant and role
+policies. The creator-to-owner trigger checks `auth.uid()` and is not exposed as
+an RPC; client roles cannot write membership records. Supplier listings remain
+explicitly published and visible only to authenticated users, while a supplier's
+review status is never self-assignable.
+
+These controls are implemented in a migration and a local pgTAP suite, but have
+not been applied to or tested against a hosted database. Local RLS execution
+requires the Supabase CLI and Docker. The exact scope, setup and remaining limits
+are in `docs/tenant-foundation.md`.

@@ -4,6 +4,7 @@ interface ImportMetaEnv {
   readonly VITE_DEFAULT_LOCALE?: string;
   readonly VITE_STALENESS_HOURS?: string;
   readonly VITE_SUPABASE_URL?: string;
+  readonly VITE_SUPABASE_PUBLISHABLE_KEY?: string;
   readonly VITE_SUPABASE_ANON_KEY?: string;
 }
 
