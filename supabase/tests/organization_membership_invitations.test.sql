@@ -38,7 +38,10 @@ select is(public.change_organization_member_role('52000000-0000-4000-8000-000000
 select is(public.remove_organization_member('52000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000001'),false,'admin cannot remove owner');
 select is(public.change_organization_member_role('52000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000003','viewer'),true,'admin can change non-owner role');
 select is(public.remove_organization_member('52000000-0000-4000-8000-000000000001','51000000-0000-4000-8000-000000000003'),true,'admin can remove non-owner member');
-select is(public.revoke_organization_invitation('52000000-0000-4000-8000-000000000001',(select id from public.organization_invitations where email='newhire@example.test')),true,'manager can revoke pending invitation');
+reset role;
+select set_config('test.invitation_id',(select id::text from public.organization_invitations where email='newhire@example.test'),true);
+set local role authenticated;
+select is(public.revoke_organization_invitation('52000000-0000-4000-8000-000000000001',current_setting('test.invitation_id')::uuid),true,'manager can revoke pending invitation');
 select is(public.accept_organization_invitation(repeat('A',43)),null::uuid,'revoked invitation cannot be accepted');
 select is(public.accept_organization_invitation('invalid'),null::uuid,'malformed token is rejected');
 reset role;
