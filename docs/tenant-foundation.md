@@ -5,7 +5,7 @@ This slice adds an opt-in Supabase-backed account workspace alongside the existi
 ## What persists
 
 - **Organizations** are buyer or supplier tenants. A signed-in user creates one; a database trigger adds that same `auth.uid()` as its initial `owner` in the same transaction. The client cannot insert, edit, or delete membership rows directly.
-- **Memberships** store trusted organization roles. In this first slice, each organization has only its creator/owner. Invitations, role changes, removing members, and shared multi-user administration are not implemented.
+- **Memberships** store trusted organization roles. Owners/admins can list members and pending invitations and can change roles, remove members, create/revoke invitations through narrowly scoped RPCs. The database remains authoritative for authorization.
 - **Buyer locations** are owned by one buyer organization. Their addresses can be read only by authorized members of that tenant; supplier users cannot query them through this API. No address format, country, geofence, or delivery zone is assumed.
 - **Supplier profiles** start in `pending`. The client cannot set or update the verification status. There is no operator review queue in this slice, so a pending profile must never be described as verified.
 - **Catalog offers** belong to exactly one supplier organization and contain a supplier SKU, sell-unit/pack details, MOQ, order step, currency, price and separately timestamped availability. Currency is entered explicitly; no country or currency default is selected. Price is a decimal amount paired with a three-letter currency code; no conversion or settlement is performed. Draft offers are supplier-private. Only published offers from approved suppliers are visible to signed-in accounts; anonymous visitors see none.
@@ -22,7 +22,7 @@ The local `supabase/config.toml` exposes only `public` and sets `api.auto_expose
 
 ## Run locally
 
-The repository now contains a local Supabase project configuration, an imperative migration, and pgTAP policy tests. With Docker and the Supabase CLI installed, use only the local commands:
+The repository now contains a local Supabase project configuration, imperative migrations (including `20261123233842_organization_membership_invitation_lifecycle.sql`), and pgTAP policy tests. With Docker and the Supabase CLI installed, use only the local commands:
 
 ```bash
 npx supabase start
@@ -35,11 +35,11 @@ npx supabase status
 
 Copy the local API URL and public anon/publishable key from `supabase status` into an ignored `.env.local` file as `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (or use `VITE_SUPABASE_ANON_KEY` for compatibility), then restart Vite. Never use `supabase link`, `supabase db push`, a hosted database URL, a service-role key, or a production project as part of this local test flow. A hosted deployment and hosted migration have not been configured or run.
 
-The SQL policy suite is `supabase/tests/tenant_catalog_rls.test.sql` (68 pgTAP assertions). It checks RLS on all five public tables, anonymous table/column grants, bounded authenticated privileges, tenant isolation, authenticated organization creation and creator binding, buyer-location operations, supplier-profile edits and self-approval denial, approved-supplier publication/versioning, own-offer price/currency/availability edits, cross-tenant and unapproved edit denials, and catalog-vs-order-operator permissions using synthetic identities. `.github/workflows/supabase-db.yml` runs the migration and this suite against a fresh local Postgres instance on pushes and pull requests; it uses no hosted project or secrets. Running the suite locally requires Docker; when it is unavailable, rely on the GitHub database CI result before treating the database layer as verified.
+The SQL tests are `supabase/tests/tenant_catalog_rls.test.sql` (68 assertions) and `supabase/tests/organization_membership_invitations.test.sql` (42 assertions), 110 pgTAP assertions total. The first suite checks RLS, grants, tenant isolation, organization bootstrap, buyer locations, supplier verification, catalog publishing and edits. The second checks membership/invitation RPC grants, manager and non-member access, SHA-256 token storage, normalized email, seven-day expiry, invitation revocation, matching Auth email, one-time acceptance, and the last-owner guard. `.github/workflows/supabase-db.yml` applies all migrations and runs both suites against a fresh local Postgres instance on pushes and pull requests; it uses no hosted project or secrets. Running the suites locally requires Docker. Docker is not available in the current development environment, so the database layer is not considered verified until the GitHub database CI passes.
 
-## Deliberately not included
+## Boundaries and remaining scope
 
-This foundation does not implement invitations, account recovery screens, profile identity verification, operator approval, account deletion/retention, orders, procurement history, CSV uploads to a server, notifications, payments, escrow, split settlement, delivery-provider integrations, or market-specific/legal validation. The buyer/supplier screens are an onboarding and catalog slice, not a claim that Product Ready has been reached.
+Invitation links are passed manually: the app does not send email and no email provider is configured. The fragment link is valid for 7 days; after signing in with the invited email (case-insensitive match), the user must explicitly accept it in `/account`. Database RPCs consume the invitation atomically once, and an owner/admin can revoke it before acceptance. Owners/admins can manage members and invitations; only owners can grant owner status, and the database prevents demoting or removing the last active owner. Do not log, publish or expose invitation links/tokens; the secret is kept in page memory and removed from the URL fragment when opened. This foundation does not implement account recovery screens, profile identity verification, operator approval, account deletion/retention, orders, procurement history, CSV uploads to a server, notifications, payments, escrow, split settlement, delivery-provider integrations, or market-specific/legal validation. The buyer/supplier screens remain a staged onboarding and catalog foundation, not a claim that the entire product is ready.
 
 ## Technical references
 

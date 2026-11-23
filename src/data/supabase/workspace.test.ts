@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   CatalogOfferRow,
   MembershipRole,
@@ -214,5 +214,106 @@ describe("supplier catalog edit access", () => {
       column: "supplier_organization_id",
       value: "supplier-1",
     });
+  });
+});
+
+import {
+  canManageOrganization,
+  generateInvitationToken,
+  invitationLink,
+  listOrganizationMembers,
+  listOrganizationInvitations,
+  createOrganizationInvitation,
+  revokeOrganizationInvitation,
+  changeOrganizationMemberRole,
+  removeOrganizationMember,
+  acceptOrganizationInvitation,
+} from "./workspace";
+
+describe("organization access RPC contract", () => {
+  it("gates organization management to owner and admin", () => {
+    expect(canManageOrganization("owner")).toBe(true);
+    expect(canManageOrganization("admin")).toBe(true);
+    expect(canManageOrganization("buyer")).toBe(false);
+    expect(canManageOrganization("viewer")).toBe(false);
+  });
+
+  it("generates a 43-character URL-safe cryptographic token and fragment link", () => {
+    const token = generateInvitationToken();
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(invitationLink(token)).toBe(
+      `${window.location.origin}/account#invite=${token}`,
+    );
+  });
+
+  it("uses only the named RPCs for membership and invitation actions", async () => {
+    const rpc = vi.fn((name: string) =>
+      Promise.resolve({
+        data: name.startsWith("list_")
+          ? []
+          : name === "create_organization_invitation"
+            ? [{ invitation_id: "inv-1", expires_at: "soon" }]
+            : name === "accept_organization_invitation"
+              ? "org-1"
+              : true,
+        error: null,
+      }),
+    );
+    const from = vi.fn(() => {
+      throw new Error("table access is forbidden for this feature");
+    });
+    const client = { rpc, from } as unknown as WorkspaceClient;
+    await listOrganizationMembers(client, "org");
+    await listOrganizationInvitations(client, "org");
+    await createOrganizationInvitation(
+      client,
+      "org",
+      "test@example.invalid",
+      "buyer",
+      "secret",
+    );
+    await revokeOrganizationInvitation(client, "org", "inv");
+    await changeOrganizationMemberRole(client, "org", "user", "viewer");
+    await removeOrganizationMember(client, "org", "user");
+    await acceptOrganizationInvitation(client, "secret");
+    expect(rpc.mock.calls.map(([name]) => name)).toEqual([
+      "list_organization_members",
+      "list_organization_invitations",
+      "create_organization_invitation",
+      "revoke_organization_invitation",
+      "change_organization_member_role",
+      "remove_organization_member",
+      "accept_organization_invitation",
+    ]);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it("treats empty invitation rows and false mutation results as failures", async () => {
+    const rpc = vi.fn((name: string) =>
+      Promise.resolve({
+        data: name === "create_organization_invitation" ? [] : false,
+        error: null,
+      }),
+    );
+    const client = { rpc } as unknown as WorkspaceClient;
+
+    await expect(
+      createOrganizationInvitation(
+        client,
+        "org",
+        "manager@example.invalid",
+        "buyer",
+        "A".repeat(43),
+      ),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "operation_failed" });
+    await expect(
+      revokeOrganizationInvitation(client, "org", "invitation"),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "operation_failed" });
+    await expect(
+      changeOrganizationMemberRole(client, "org", "member", "viewer"),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "operation_failed" });
+    await expect(removeOrganizationMember(client, "org", "member")).rejects.toMatchObject<
+      Partial<WorkspaceError>
+    >({ code: "operation_failed" });
   });
 });

@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "re
 import type { User } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/data/supabase/client";
 import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
+import { OrganizationAccess } from "@/features/account/OrganizationAccess";
+import {
+  acceptOrganizationInvitation,
+  canManageOrganization,
+} from "@/data/supabase/workspace";
+import { useRef } from "react";
 import type {
   CatalogAvailability,
   OrganizationType,
@@ -66,7 +72,13 @@ function Notice({
   return <div className={`notice notice-${tone}`}>{children}</div>;
 }
 
-function AccountAuth({ client }: { client: WorkspaceClient }): ReactNode {
+function AccountAuth({
+  client,
+  inviteToken,
+}: {
+  client: WorkspaceClient;
+  inviteToken: string | null;
+}): ReactNode {
   const [mode, setMode] = useState<"sign_in" | "sign_up">("sign_in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -114,6 +126,12 @@ function AccountAuth({ client }: { client: WorkspaceClient }): ReactNode {
   return (
     <main className="account-page">
       <section className="card account-card" aria-labelledby="account-title">
+        {inviteToken ? (
+          <Notice>
+            Вы открыли приглашение. Войдите или создайте аккаунт с совпадающим email,
+            чтобы принять его.
+          </Notice>
+        ) : null}
         <p className="eyebrow">Рабочий контур</p>
         <h1 id="account-title">Вход в HoReCa Marketplace</h1>
         <p>
@@ -217,9 +235,11 @@ function useAuthenticatedUser(client: WorkspaceClient) {
 function AccountWorkspaceReady({
   client,
   user,
+  inviteToken,
 }: {
   client: WorkspaceClient;
   user: User;
+  inviteToken: string | null;
 }): ReactNode {
   const [snapshot, setSnapshot] = useState<WorkspaceSnapshot>(EMPTY_WORKSPACE);
   const [loading, setLoading] = useState(true);
@@ -229,6 +249,9 @@ function AccountWorkspaceReady({
   const [actionMessage, setActionMessage] = useState("");
   const [actionError, setActionError] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
+  const acceptedToken = useRef<string | null>(null);
+  const [invitationBusy, setInvitationBusy] = useState(false);
+  const [inviteNotice, setInviteNotice] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -283,6 +306,27 @@ function AccountWorkspaceReady({
     }
   }
 
+  async function acceptInvitation() {
+    if (!inviteToken || acceptedToken.current === inviteToken) return;
+    acceptedToken.current = inviteToken;
+    setInvitationBusy(true);
+    setInviteNotice("");
+    try {
+      await acceptOrganizationInvitation(client, inviteToken);
+      setInviteNotice(
+        "Приглашение принято. Организация доступна в рабочем пространстве.",
+      );
+      setRefreshKey((value) => value + 1);
+    } catch {
+      acceptedToken.current = null;
+      setInviteNotice(
+        "Не удалось принять приглашение. Проверьте совпадение email; ссылка может быть отозвана, использована или истекла.",
+      );
+    } finally {
+      setInvitationBusy(false);
+    }
+  }
+
   async function signOut() {
     setActionBusy(true);
     setActionError("");
@@ -324,6 +368,28 @@ function AccountWorkspaceReady({
         </button>
       </header>
 
+      {inviteNotice ? (
+        <Notice tone={inviteNotice.startsWith("Приглашение принято") ? "info" : "danger"}>
+          {inviteNotice}
+        </Notice>
+      ) : null}
+      {inviteToken && !inviteNotice.startsWith("Приглашение принято") ? (
+        <section className="card account-section">
+          <h2 className="card-title">Приглашение в организацию</h2>
+          <p>
+            Вы вошли как {user.email ?? "пользователь Supabase"}. Принимать приглашение
+            можно только под адресом, на который оно оформлено.
+          </p>
+          <button
+            className="btn btn-primary"
+            type="button"
+            onClick={() => void acceptInvitation()}
+            disabled={invitationBusy}
+          >
+            {invitationBusy ? "Принимаем…" : "Принять приглашение"}
+          </button>
+        </section>
+      ) : null}
       {actionError ? <Notice tone="danger">{actionError}</Notice> : null}
       {actionMessage ? <Notice>{actionMessage}</Notice> : null}
       {loadError ? (
@@ -394,6 +460,15 @@ function AccountWorkspaceReady({
               </div>
             ) : null}
           </section>
+
+          {activeOrganization && canManageOrganization(activeOrganization.role) ? (
+            <OrganizationAccess
+              client={client}
+              organizationId={activeOrganization.id}
+              userId={user.id}
+              actorRole={activeOrganization.role}
+            />
+          ) : null}
 
           {activeOrganization?.organization_type === "buyer" ? (
             <section className="card account-section">
@@ -627,9 +702,10 @@ function AccountWorkspaceReady({
       <section className="card account-section account-boundary-note">
         <h2 className="card-title">Граница этого среза</h2>
         <p>
-          Здесь есть Auth, организации, членства, точки покупателя и базовые SKU.
-          Приглашения сотрудников, operator review UI, корзина/закупки, доставка, оплаты,
-          escrow и settlement не входят в этот первый engineering slice.
+          Здесь есть Auth, организации, членства, точки покупателя и базовые SKU. Почтовый
+          провайдер не подключён: приглашения передаются вручную по ссылке. Operator
+          review UI, корзина/закупки, доставка, оплаты, escrow и settlement не входят в
+          этот engineering slice.
         </p>
       </section>
     </main>
@@ -1099,11 +1175,30 @@ function formatTimestamp(value: string): string {
 
 export function AccountWorkspace(): ReactNode {
   const client = getSupabaseClient();
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const token = params.get("invite");
+    if (token) {
+      setInviteToken(token);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${window.location.search}`,
+      );
+    }
+  }, []);
   if (!client) return <AccountConfigurationNotice />;
-  return <AccountWorkspaceWithClient client={client} />;
+  return <AccountWorkspaceWithClient client={client} inviteToken={inviteToken} />;
 }
 
-function AccountWorkspaceWithClient({ client }: { client: WorkspaceClient }): ReactNode {
+function AccountWorkspaceWithClient({
+  client,
+  inviteToken,
+}: {
+  client: WorkspaceClient;
+  inviteToken: string | null;
+}): ReactNode {
   const { user, loading } = useAuthenticatedUser(client);
   if (loading) {
     return (
@@ -1115,8 +1210,8 @@ function AccountWorkspaceWithClient({ client }: { client: WorkspaceClient }): Re
     );
   }
   return user ? (
-    <AccountWorkspaceReady client={client} user={user} />
+    <AccountWorkspaceReady client={client} user={user} inviteToken={inviteToken} />
   ) : (
-    <AccountAuth client={client} />
+    <AccountAuth client={client} inviteToken={inviteToken} />
   );
 }

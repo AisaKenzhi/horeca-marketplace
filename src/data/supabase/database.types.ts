@@ -137,7 +137,50 @@ export type Database = {
       >;
     };
     Views: { [_ in never]: never };
-    Functions: { [_ in never]: never };
+    Functions: {
+      list_organization_members: {
+        Args: { p_organization_id: string };
+        Returns: {
+          user_id: string;
+          email: string;
+          role: MembershipRole;
+          created_at: string;
+        }[];
+      };
+      list_organization_invitations: {
+        Args: { p_organization_id: string };
+        Returns: {
+          invitation_id: string;
+          email: string;
+          role: MembershipRole;
+          invited_by: string;
+          created_at: string;
+          expires_at: string;
+        }[];
+      };
+      create_organization_invitation: {
+        Args: {
+          p_organization_id: string;
+          p_email: string;
+          p_role: MembershipRole;
+          p_token: string;
+        };
+        Returns: { invitation_id: string; expires_at: string }[];
+      };
+      revoke_organization_invitation: {
+        Args: { p_organization_id: string; p_invitation_id: string };
+        Returns: boolean;
+      };
+      change_organization_member_role: {
+        Args: { p_organization_id: string; p_user_id: string; p_role: MembershipRole };
+        Returns: boolean;
+      };
+      remove_organization_member: {
+        Args: { p_organization_id: string; p_user_id: string };
+        Returns: boolean;
+      };
+      accept_organization_invitation: { Args: { p_token: string }; Returns: string };
+    };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };
   };

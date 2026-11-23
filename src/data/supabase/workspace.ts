@@ -61,7 +61,12 @@ export interface WorkspaceSnapshot {
 }
 
 export type WorkspaceErrorCode =
-  "invalid" | "permission" | "duplicate" | "unavailable" | "not_found";
+  | "invalid"
+  | "permission"
+  | "duplicate"
+  | "unavailable"
+  | "not_found"
+  | "operation_failed";
 
 export function canManageSupplierCatalog(role: MembershipRole): boolean {
   return role === "owner" || role === "admin" || role === "catalog_operator";
@@ -149,6 +154,8 @@ export function workspaceErrorMessage(error: unknown): string {
         return "Запись больше недоступна. Обновите страницу и попробуйте ещё раз.";
       case "unavailable":
         return "Не удалось связаться с рабочим контуром. Проверьте подключение и повторите попытку.";
+      case "operation_failed":
+        return "Действие не выполнено. Обновите данные и проверьте права или состояние записи.";
     }
   }
 
@@ -343,5 +350,124 @@ export async function updateCatalogOfferTerms(
     .eq("supplier_organization_id", organizationId)
     .select(OFFER_COLUMNS)
     .single();
+  return unwrap(data, error);
+}
+
+export interface OrganizationMember {
+  readonly user_id: string;
+  readonly email: string;
+  readonly role: MembershipRole;
+  readonly created_at: string;
+}
+export interface OrganizationInvitation {
+  readonly invitation_id: string;
+  readonly email: string;
+  readonly role: MembershipRole;
+  readonly invited_by: string;
+  readonly created_at: string;
+  readonly expires_at: string;
+}
+
+export function canManageOrganization(role: MembershipRole): boolean {
+  return role === "owner" || role === "admin";
+}
+
+export function generateInvitationToken(): string {
+  const bytes = new Uint8Array(32);
+  window.crypto.getRandomValues(bytes);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+export function invitationLink(token: string): string {
+  const url = new URL("/account", window.location.origin);
+  url.hash = `invite=${token}`;
+  return url.toString();
+}
+
+export async function listOrganizationMembers(
+  client: WorkspaceClient,
+  organizationId: string,
+) {
+  const { data, error } = await client.rpc("list_organization_members", {
+    p_organization_id: organizationId,
+  });
+  return unwrap(data, error);
+}
+export async function listOrganizationInvitations(
+  client: WorkspaceClient,
+  organizationId: string,
+) {
+  const { data, error } = await client.rpc("list_organization_invitations", {
+    p_organization_id: organizationId,
+  });
+  return unwrap(data, error);
+}
+export async function createOrganizationInvitation(
+  client: WorkspaceClient,
+  organizationId: string,
+  email: string,
+  role: MembershipRole,
+  token: string,
+) {
+  const { data, error } = await client.rpc("create_organization_invitation", {
+    p_organization_id: organizationId,
+    p_email: email.trim(),
+    p_role: role,
+    p_token: token,
+  });
+  const rows = unwrap(data, error);
+  if (rows.length !== 1) throw new WorkspaceError("operation_failed");
+  return rows[0];
+}
+
+function unwrapSuccessfulMutation(data: boolean | null, error: unknown): void {
+  const succeeded = unwrap(data, error);
+  if (!succeeded) throw new WorkspaceError("operation_failed");
+}
+
+export async function revokeOrganizationInvitation(
+  client: WorkspaceClient,
+  organizationId: string,
+  invitationId: string,
+) {
+  const { data, error } = await client.rpc("revoke_organization_invitation", {
+    p_organization_id: organizationId,
+    p_invitation_id: invitationId,
+  });
+  unwrapSuccessfulMutation(data, error);
+}
+export async function changeOrganizationMemberRole(
+  client: WorkspaceClient,
+  organizationId: string,
+  userId: string,
+  role: MembershipRole,
+) {
+  const { data, error } = await client.rpc("change_organization_member_role", {
+    p_organization_id: organizationId,
+    p_user_id: userId,
+    p_role: role,
+  });
+  unwrapSuccessfulMutation(data, error);
+}
+export async function removeOrganizationMember(
+  client: WorkspaceClient,
+  organizationId: string,
+  userId: string,
+) {
+  const { data, error } = await client.rpc("remove_organization_member", {
+    p_organization_id: organizationId,
+    p_user_id: userId,
+  });
+  unwrapSuccessfulMutation(data, error);
+}
+export async function acceptOrganizationInvitation(
+  client: WorkspaceClient,
+  token: string,
+) {
+  const { data, error } = await client.rpc("accept_organization_invitation", {
+    p_token: token,
+  });
   return unwrap(data, error);
 }

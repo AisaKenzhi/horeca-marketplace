@@ -23,7 +23,7 @@ npx supabase test db
 npx supabase status
 ```
 
-These commands target the local stack by default. `db reset` rebuilds the local database from the checked-in migrations and discards its current local database state. `--no-seed` is intentional: at the feature-head revision, `supabase/config.toml` enables `./seed.sql`, but `supabase/seed.sql` is not present in the repository. The RLS suite uses synthetic identities; do not assume there is application seed data. The CLI's `test db` command runs pgTAP tests against the local stack.
+These commands target the local stack by default. `db reset` rebuilds the local database from the checked-in migrations and discards its current local database state. `--no-seed` is intentional: the configured `supabase/seed.sql` is deliberately empty, and the pgTAP suites create synthetic identities and rows inside transactions. Do not assume there is application seed data. The CLI's `test db` command runs all pgTAP suites against the local stack.
 
 Do not add `--remote`/`--db-url`, run `supabase link` or `supabase db push`, or point this workflow at a hosted or production project. This runbook does not configure or migrate a hosted database.
 
@@ -80,7 +80,7 @@ The local database/RLS check is:
 npx supabase test db
 ```
 
-It runs `supabase/tests/tenant_catalog_rls.test.sql` (25 pgTAP assertions) against the local Supabase stack. It requires Docker and a successful local `start`/`db reset`; it does not test hosted data.
+It runs both `supabase/tests/tenant_catalog_rls.test.sql` (68 assertions) and `supabase/tests/organization_membership_invitations.test.sql` (42 assertions), 110 pgTAP assertions total, against the local Supabase stack. The second suite covers management permissions, token hashing, email matching, single-use acceptance, expiry/revocation and last-owner safeguards. It requires Docker and a successful local `start`/`db reset`; it does not test hosted data.
 
 The Playwright suite is an additional app-level check, not an authenticated Supabase integration test. Install Chromium once if needed, then run the build and E2E suite against the local preview server:
 
@@ -93,4 +93,4 @@ To stop the local stack when finished, run `npx supabase stop`.
 
 ## What is and is not covered
 
-The UI tests cover the unconfigured `/account` notice and organization/catalog form validation. The pgTAP suite covers tenant isolation, owner bootstrap, grants, anonymous access denial, and catalog visibility rules. The app flow has no account-recovery screen, invitations, role administration, or hosted-backend setup; see [the tenant foundation overview](tenant-foundation.md) for the security model and scope limits.
+Owners and admins can list organization members and pending invitations, change member roles and remove members; only an owner can grant the owner role. The database blocks demoting or removing the last active owner. There is no email provider: after creating an invitation, copy its link and deliver it to the invitee manually through a channel you choose. The link is valid for 7 days. The invitee must sign in or register with the invited email address (case-insensitive), then explicitly press **Accept invitation** in `/account`. Acceptance is atomic and one-time. Owners/admins can revoke an unused invitation. Do not publish the link or place its URL/token in logs, screenshots or analytics. The token is held only in page memory; copy it before closing or reloading the page. See the [tenant foundation overview](tenant-foundation.md).
