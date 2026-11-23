@@ -15,6 +15,16 @@ function renderAccountRoute() {
   );
 }
 
+function renderDemoRoute() {
+  return render(
+    <MemoryRouter initialEntries={["/catalog"]}>
+      <AppProvider>
+        <App />
+      </AppProvider>
+    </MemoryRouter>,
+  );
+}
+
 describe("authenticated account vertical", () => {
   it("explains the explicit public-key configuration without exposing a service key", () => {
     render(<AccountConfigurationNotice />);
@@ -32,5 +42,15 @@ describe("authenticated account vertical", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/Демонстрационный режим/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/демо-персона/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps synthetic demo routes available alongside /account", () => {
+    renderDemoRoute();
+    expect(screen.getByText(/Демонстрационный режим/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Рабочий аккаунт" })).toHaveAttribute(
+      "href",
+      "/account",
+    );
+    expect(screen.getByRole("heading", { name: /Каталог/ })).toBeInTheDocument();
   });
 });

@@ -1,0 +1,2 @@
+-- Intentionally empty seed file required by supabase/config.toml.
+-- Test fixtures are created and rolled back inside the pgTAP test transaction.

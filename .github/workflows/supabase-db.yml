@@ -1,0 +1,23 @@
+name: Local Supabase database tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-db:
+    name: Ephemeral local database (pgTAP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.84.2
+      - name: Start local Supabase stack
+        run: supabase start
+      - name: Run database tests
+        run: supabase test db
