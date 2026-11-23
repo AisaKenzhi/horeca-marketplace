@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 const LOCAL_SUPABASE_URL = "http://127.0.0.1:4173";
-const MOCK_PUBLISHABLE_KEY = "playwright-public-test-key";
+const MOCK_PUBLISHABLE_KEY = "sb_publishable_playwright-test-key";
 const hasSupabaseConfiguration = Boolean(
   process.env.VITE_SUPABASE_URL?.trim() &&
   (process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.trim() ||
