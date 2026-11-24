@@ -474,8 +474,8 @@ export async function acceptOrganizationInvitation(
   return unwrap(data, error);
 }
 
-export interface BuyerProcurementList extends BuyerProcurementListRow {}
-export interface BuyerProcurementListItem extends BuyerProcurementListItemRow {}
+export type BuyerProcurementList = BuyerProcurementListRow;
+export type BuyerProcurementListItem = BuyerProcurementListItemRow;
 export type BuyerProcurementListWithItems = BuyerProcurementListRow & {
   items: BuyerProcurementListItemRow[];
 };

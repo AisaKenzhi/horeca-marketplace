@@ -732,3 +732,79 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.procurement-list-stack,
+.draft-cart-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+.procurement-list-card,
+.draft-cart-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem;
+  background: var(--surface);
+}
+.procurement-list-heading,
+.procurement-list-actions,
+.procurement-list-item-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.procurement-list-heading {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.procurement-list-heading h3,
+.draft-cart-card h4,
+.draft-cart-preview h3 {
+  margin: 0;
+}
+.procurement-list-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+  width: 100%;
+}
+.procurement-list-items li {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: end;
+}
+.procurement-list-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.procurement-list-item-controls {
+  justify-content: flex-start;
+}
+.procurement-list-item-controls .field {
+  min-width: min(100%, 12rem);
+}
+.procurement-list-quantity-readonly {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+}
+.draft-cart-preview {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.draft-cart-card h4 {
+  margin-bottom: 0.65rem;
+}
+
+@media (min-width: 720px) {
+  .procurement-list-items li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .procurement-list-item-controls {
+    justify-content: flex-end;
+  }
+}

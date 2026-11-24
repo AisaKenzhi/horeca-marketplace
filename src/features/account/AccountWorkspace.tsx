@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/data/supabase/client";
+import { BuyerProcurementListsPanel } from "@/features/account/BuyerProcurementListsPanel";
 import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
 import { OrganizationAccess } from "@/features/account/OrganizationAccess";
 import {
@@ -500,6 +501,16 @@ function AccountWorkspaceReady({
             </section>
           ) : null}
 
+          {activeOrganization?.organization_type === "buyer" ? (
+            <BuyerProcurementListsPanel
+              client={client}
+              organizationId={activeOrganization.id}
+              role={activeOrganization.role}
+              offers={snapshot.catalog}
+              supplierProfiles={snapshot.supplierProfiles}
+            />
+          ) : null}
+
           {activeOrganization?.organization_type === "supplier" ? (
             <section className="card account-section">
               <h2 className="card-title">Профиль поставщика</h2>
@@ -702,10 +713,12 @@ function AccountWorkspaceReady({
       <section className="card account-section account-boundary-note">
         <h2 className="card-title">Граница этого среза</h2>
         <p>
-          Здесь есть Auth, организации, членства, точки покупателя и базовые SKU. Почтовый
-          провайдер не подключён: приглашения передаются вручную по ссылке. Operator
-          review UI, корзина/закупки, доставка, оплаты, escrow и settlement не входят в
-          этот engineering slice.
+          Здесь есть Auth, организации, членства, точки покупателя, базовые SKU и
+          сохранённые списки закупок. Добавление списка формирует только черновую корзину
+          в текущем просмотре; заказ не создаётся и не отправляется. Почтовый провайдер не
+          подключён: приглашения передаются вручную по ссылке. Operator review UI,
+          отправка закупки, доставка, оплаты, escrow и settlement не входят в этот
+          engineering slice.
         </p>
       </section>
     </main>
