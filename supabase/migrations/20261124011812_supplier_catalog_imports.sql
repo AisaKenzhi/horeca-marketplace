@@ -84,6 +84,7 @@ declare
   v_duplicate_count integer;
   v_blocked boolean := false;
   v_summary jsonb;
+  v_numeric numeric;
   v_field record;
   v_error_item jsonb;
 begin
@@ -235,26 +236,38 @@ begin
           v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_sell_unit');
         end if;
 
-        if coalesce(v_values ->> 'units_per_sell_unit', '') !~ '^[0-9]{1,10}$'
-           or case when coalesce(v_values ->> 'units_per_sell_unit', '') ~ '^[0-9]{1,10}$'
-                then (v_values ->> 'units_per_sell_unit')::numeric not between 1 and 2147483647
-                else false end
-           or coalesce(v_values ->> 'moq', '') !~ '^[0-9]{1,10}$'
-           or case when coalesce(v_values ->> 'moq', '') ~ '^[0-9]{1,10}$'
-                then (v_values ->> 'moq')::numeric not between 1 and 2147483647
-                else false end
-           or coalesce(v_values ->> 'order_step', '') !~ '^[0-9]{1,10}$'
-           or case when coalesce(v_values ->> 'order_step', '') ~ '^[0-9]{1,10}$'
-                then (v_values ->> 'order_step')::numeric not between 1 and 2147483647
-                else false end then
+        if coalesce(v_values ->> 'units_per_sell_unit', '') !~ '^[0-9]{1,10}$' then
           v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_integer');
+        else
+          v_numeric := (v_values ->> 'units_per_sell_unit')::numeric;
+          if v_numeric not between 1 and 2147483647 then
+            v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_integer');
+          end if;
+        end if;
+        if coalesce(v_values ->> 'moq', '') !~ '^[0-9]{1,10}$' then
+          v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_integer');
+        else
+          v_numeric := (v_values ->> 'moq')::numeric;
+          if v_numeric not between 1 and 2147483647 then
+            v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_integer');
+          end if;
+        end if;
+        if coalesce(v_values ->> 'order_step', '') !~ '^[0-9]{1,10}$' then
+          v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_integer');
+        else
+          v_numeric := (v_values ->> 'order_step')::numeric;
+          if v_numeric not between 1 and 2147483647 then
+            v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_integer');
+          end if;
         end if;
 
-        if coalesce(v_values ->> 'pack_amount', '') !~ '^[0-9]{1,9}(\.[0-9]{1,3})?$'
-           or case when coalesce(v_values ->> 'pack_amount', '') ~ '^[0-9]{1,9}(\.[0-9]{1,3})?$'
-                then (v_values ->> 'pack_amount')::numeric <= 0
-                else false end then
+        if coalesce(v_values ->> 'pack_amount', '') !~ '^[0-9]{1,9}(\.[0-9]{1,3})?$' then
           v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_pack_amount');
+        else
+          v_numeric := (v_values ->> 'pack_amount')::numeric;
+          if v_numeric <= 0 then
+            v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_pack_amount');
+          end if;
         end if;
         if coalesce(v_pack_unit, '') not in ('kg', 'l', 'piece') then
           v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_pack_unit');
@@ -262,11 +275,13 @@ begin
         if v_availability not in ('in_stock', 'low_stock', 'out_of_stock', 'on_request', 'unknown') then
           v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_availability');
         end if;
-        if coalesce(v_values ->> 'price_amount', '') !~ '^[0-9]{1,12}(\.[0-9]{1,4})?$'
-           or case when coalesce(v_values ->> 'price_amount', '') ~ '^[0-9]{1,12}(\.[0-9]{1,4})?$'
-                then (v_values ->> 'price_amount')::numeric <= 0
-                else false end then
+        if coalesce(v_values ->> 'price_amount', '') !~ '^[0-9]{1,12}(\.[0-9]{1,4})?$' then
           v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_price');
+        else
+          v_numeric := (v_values ->> 'price_amount')::numeric;
+          if v_numeric <= 0 then
+            v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_price');
+          end if;
         end if;
         if coalesce(v_values ->> 'currency', '') !~ '^[A-Z]{3}$' then
           v_errors := v_errors || pg_catalog.jsonb_build_array('invalid_currency');
