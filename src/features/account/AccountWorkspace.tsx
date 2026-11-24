@@ -372,7 +372,7 @@ function useAuthenticatedUser(client: WorkspaceClient, onPasswordRecovery: () =>
   return { user, loading };
 }
 
-function AccountWorkspaceReady({
+export function AccountWorkspaceReady({
   client,
   user,
   inviteToken,

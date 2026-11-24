@@ -124,6 +124,9 @@ export type BuyerProcurementRequestRow = {
   organization_id: string;
   draft_cart_id: string;
   buyer_location_id: string;
+  buyer_location_name: string;
+  buyer_location_address: string;
+  buyer_location_delivery_zone: string | null;
   seller_type: "platform";
   request_status: "submitted";
   source_list_name: string;

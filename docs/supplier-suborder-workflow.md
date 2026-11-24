@@ -49,6 +49,8 @@ Receipt mutation RPC возвращает объект вида:
 - `accept_buyer_supplier_suborder_version(p_buyer_organization_id, p_supplier_suborder_id, p_terms_version, p_expected_version, p_idempotency_key)`.
 - `reject_buyer_supplier_suborder_version(p_buyer_organization_id, p_supplier_suborder_id, p_terms_version, p_reason, p_expected_version, p_idempotency_key)`.
 
+Всего в публичном контракте семь workflow RPC. Ответ `list_buyer_supplier_suborder_workflows` включает `created_at` и `updated_at` workflow (оба `timestamptz`); worker, публичная обёртка и сгенерированный TypeScript return type должны совпадать. `created_at` — время создания workflow, а не timestamp отдельного решения; историю решений читают из событий/версий.
+
 Supplier actions доступны только членам supplier tenant с ролями `owner`, `admin`, `order_operator`. Buyer decision доступен только `owner`, `admin`, `buyer`; `viewer` может прочитать предложение, но не принять его. Запросы с чужим ID дают безопасный not-found. UI не является границей безопасности.
 
 ## Повторы, гонки и аудит
@@ -61,7 +63,7 @@ Supplier actions доступны только членам supplier tenant с �
 
 ## Не входит в этот контракт
 
-Нет автоматических уведомлений, таймеров/истечения, запасов и резервов, превращения статуса родителя в принятый заказ, закупок, платежей, счетов, доставки, production или реальных supplier/buyer-данных. Подключение UI и обновление сгенерированного `database.types.ts` остаются интеграционной работой после review миграции.
+Нет автоматических уведомлений, таймеров/истечения, запасов и резервов, превращения статуса родителя в принятый заказ, закупок, платежей, счетов, доставки, production или реальных supplier/buyer-данных. Inbox UI — отдельная зависимая работа; он использует существующие RPC и typed contract, не меняя backend state machine или схему БД.
 
 ## Технические источники
 

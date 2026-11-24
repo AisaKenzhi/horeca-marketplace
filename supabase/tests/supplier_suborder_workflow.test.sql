@@ -256,6 +256,10 @@ select is((select current_terms_version from public.list_buyer_supplier_suborder
   '72000000-0000-4000-8000-000000000001',current_setting('test.main_request_id')::uuid
 ) where supplier_suborder_id=current_setting('test.suborder_a_id')::uuid),2,
   'buyer viewer can read the exact current proposal for its own parent request');
+select ok((select created_at is not null from public.list_buyer_supplier_suborder_workflows(
+  '72000000-0000-4000-8000-000000000001',current_setting('test.main_request_id')::uuid
+) where supplier_suborder_id=current_setting('test.suborder_a_id')::uuid),
+  'buyer workflow-list RPC returns created_at in its public SQL row shape');
 select throws_ok(
   $$select public.accept_buyer_supplier_suborder_version(
     '72000000-0000-4000-8000-000000000001',current_setting('test.suborder_a_id')::uuid,2,2,

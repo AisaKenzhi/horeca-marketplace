@@ -103,14 +103,17 @@ function errorCode(error: unknown): string | null {
 
 function mapError(error: unknown): WorkspaceError {
   const code = errorCode(error);
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+      ? error.message
+      : null;
+  if (code === "23514" && message === "buyer_location_in_use") {
+    return new WorkspaceError("location_in_use");
+  }
   if (code === "23505") return new WorkspaceError("duplicate");
   if (code === "42501") return new WorkspaceError("permission");
   if (code === "PGRST116" || code === "P0002") return new WorkspaceError("not_found");
   if (code === "P0001") {
-    const message =
-      typeof error === "object" && error !== null && "message" in error
-        ? error.message
-        : null;
     if (message === "idempotency key conflict") {
       return new WorkspaceError("idempotency_conflict");
     }
@@ -186,7 +189,7 @@ export function workspaceErrorMessage(error: unknown): string {
       case "already_submitted":
         return "Этот черновик уже использован для запроса и заморожен. Обновите список запросов.";
       case "location_in_use":
-        return "Точка покупателя используется сохранённой корзиной или запросом. Сначала уберите её из черновиков или создайте другую точку.";
+        return "Точку нельзя удалить: она используется сохранённой корзиной или запросом. Изменение названия и адреса не меняет снимок уже отправленного запроса.";
       case "unavailable":
         return "Не удалось связаться с рабочим контуром. Проверьте подключение и повторите попытку.";
       case "operation_failed":
@@ -981,7 +984,7 @@ const BUYER_DRAFT_CART_COLUMNS =
 const BUYER_DRAFT_CART_ITEM_COLUMNS =
   "id,organization_id,cart_id,catalog_offer_id,quantity,catalog_offer_version,created_at,updated_at" as const;
 const BUYER_PROCUREMENT_REQUEST_COLUMNS =
-  "id,organization_id,draft_cart_id,buyer_location_id,seller_type,request_status,source_list_name,submitted_by,submitted_at" as const;
+  "id,organization_id,draft_cart_id,buyer_location_id,buyer_location_name,buyer_location_address,buyer_location_delivery_zone,seller_type,request_status,source_list_name,submitted_by,submitted_at" as const;
 const BUYER_PROCUREMENT_REQUEST_LINE_COLUMNS =
   "id,organization_id,request_id,catalog_offer_id,quantity,title,sell_unit_label,units_per_sell_unit,pack_amount,pack_base_unit,price_amount,currency,availability,catalog_offer_version,price_observed_at,availability_observed_at,created_at" as const;
 
