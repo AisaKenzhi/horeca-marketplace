@@ -73,8 +73,8 @@ select ok(
   'authenticated callers use the invoker RPC wrapper and only it delegates to the private definer worker'
 );
 select ok(
-  has_column_privilege('authenticated','public.buyer_draft_carts','organization_id','INSERT')
-  and has_column_privilege('authenticated','public.buyer_draft_carts','source_list_name','INSERT')
+  not has_column_privilege('authenticated','public.buyer_draft_carts','organization_id','INSERT')
+  and not has_column_privilege('authenticated','public.buyer_draft_carts','source_list_name','INSERT')
   and not has_column_privilege('authenticated','public.buyer_draft_carts','created_by','INSERT')
   and not has_column_privilege('authenticated','public.buyer_draft_carts','organization_id','UPDATE')
   and has_column_privilege('authenticated','public.buyer_draft_cart_items','quantity','UPDATE')
