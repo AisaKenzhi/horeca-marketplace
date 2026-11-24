@@ -58,6 +58,7 @@ const offers = [
   {
     id: OFFER_ID,
     supplier_organization_id: suppliers[0]!.organization_id,
+    product_id: null,
     supplier_sku: "E2E-FLOUR",
     title: "E2E flour",
     category: "Food",

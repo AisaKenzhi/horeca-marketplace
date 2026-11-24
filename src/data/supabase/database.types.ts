@@ -57,6 +57,7 @@ export type SupplierProfileRow = {
 export type CatalogOfferRow = {
   id: string;
   supplier_organization_id: string;
+  product_id: string | null;
   supplier_sku: string;
   title: string;
   category: string;
@@ -152,6 +153,7 @@ export type Database = {
         CatalogOfferRow,
         {
           supplier_organization_id: string;
+          product_id?: never;
           supplier_sku: string;
           title: string;
           category: string;
@@ -258,6 +260,18 @@ export type Database = {
       create_buyer_draft_cart: {
         Args: { p_organization_id: string; p_source_list_id: string };
         Returns: string;
+      };
+      preview_supplier_catalog_import: {
+        Args: {
+          p_organization_id: string;
+          p_idempotency_key: string;
+          p_rows: Json;
+        };
+        Returns: Json;
+      };
+      apply_supplier_catalog_import: {
+        Args: { p_organization_id: string; p_import_id: string };
+        Returns: Json;
       };
     };
     Enums: { [_ in never]: never };

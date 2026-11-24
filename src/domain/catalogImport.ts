@@ -413,3 +413,307 @@ export function resolveImportRows(
     },
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Persistent authenticated supplier import (raw mapped preview only)   */
+/* ------------------------------------------------------------------ */
+
+export const PERSISTENT_IMPORT_COLUMNS = [
+  "sku",
+  "title",
+  "category",
+  "sell_unit_label",
+  "units_per_sell_unit",
+  "pack_amount",
+  "pack_base_unit",
+  "price_amount",
+  "currency",
+  "moq",
+  "order_step",
+  "availability",
+] as const;
+
+export type PersistentImportColumn = (typeof PERSISTENT_IMPORT_COLUMNS)[number];
+export type PersistentImportMapping = Readonly<
+  Partial<Record<PersistentImportColumn, number>>
+>;
+
+export const PERSISTENT_IMPORT_LIMITS = {
+  maxBytes: 512_000,
+  maxRows: 2_000,
+  maxColumns: 32,
+  maxCellChars: 4_096,
+} as const;
+
+export interface PersistentImportRow {
+  readonly row_number: number;
+  readonly values: Readonly<Record<PersistentImportColumn, string>>;
+  readonly client_errors: readonly string[];
+}
+
+export interface PersistentImportResult {
+  readonly headers: readonly string[];
+  readonly mapping: PersistentImportMapping;
+  readonly rows: readonly PersistentImportRow[];
+  readonly errors: readonly string[];
+  readonly skipped: number;
+}
+
+const PERSISTENT_REQUIRED: readonly PersistentImportColumn[] = [
+  "sku",
+  "title",
+  "category",
+  "sell_unit_label",
+  "units_per_sell_unit",
+  "pack_amount",
+  "pack_base_unit",
+  "price_amount",
+  "currency",
+  "moq",
+  "order_step",
+];
+const PERSISTENT_UNITS = new Set(["kg", "l", "piece"]);
+const PERSISTENT_AVAILABILITY = new Set([
+  "in_stock",
+  "low_stock",
+  "out_of_stock",
+  "on_request",
+  "unknown",
+]);
+const EMPTY_PERSISTENT_VALUES: Record<PersistentImportColumn, string> = {
+  sku: "",
+  title: "",
+  category: "",
+  sell_unit_label: "",
+  units_per_sell_unit: "",
+  pack_amount: "",
+  pack_base_unit: "",
+  price_amount: "",
+  currency: "",
+  moq: "",
+  order_step: "",
+  availability: "",
+};
+
+interface CsvRecord {
+  readonly cells: readonly string[];
+  readonly rowNumber: number;
+}
+
+function parseStrictCsv(input: string): { records: CsvRecord[]; error: string | null } {
+  if (input.length > PERSISTENT_IMPORT_LIMITS.maxBytes)
+    return {
+      records: [],
+      error: `CSV exceeds ${PERSISTENT_IMPORT_LIMITS.maxBytes} UTF-8 bytes`,
+    };
+  const text = input.startsWith("\uFEFF") ? input.slice(1) : input;
+  const records: CsvRecord[] = [];
+  let cells: string[] = [];
+  let cell = "";
+  let quoted = false;
+  let closedQuote = false;
+  let rowNumber = 1;
+  let recordNumber = 1;
+  let recordHasContent = false;
+  const pushCell = (): void => {
+    cells.push(cell);
+    cell = "";
+    closedQuote = false;
+  };
+  const pushRecord = (): void => {
+    pushCell();
+    if (recordHasContent || cells.some((value) => value.length > 0))
+      records.push({ cells, rowNumber: recordNumber });
+    cells = [];
+    recordNumber = rowNumber + 1;
+    recordHasContent = false;
+  };
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else {
+          quoted = false;
+          closedQuote = true;
+        }
+      } else {
+        if (ch === "\r" && text[i + 1] === "\n") {
+          cell += "\n";
+          i += 1;
+          rowNumber += 1;
+        } else {
+          cell += ch;
+          if (ch === "\n" || ch === "\r") rowNumber += 1;
+        }
+      }
+      recordHasContent = true;
+    } else if (ch === '"') {
+      if (cell.length > 0 || closedQuote)
+        return { records, error: `Malformed CSV: unexpected quote at line ${rowNumber}` };
+      quoted = true;
+      recordHasContent = true;
+    } else if (ch === ",") {
+      pushCell();
+      recordHasContent = true;
+    } else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i += 1;
+      pushRecord();
+      rowNumber += 1;
+      if (records.length > PERSISTENT_IMPORT_LIMITS.maxRows + 1)
+        return {
+          records,
+          error: `CSV exceeds ${PERSISTENT_IMPORT_LIMITS.maxRows} data rows`,
+        };
+    } else {
+      if (closedQuote)
+        return {
+          records,
+          error: `Malformed CSV: unexpected text after closing quote at line ${rowNumber}`,
+        };
+      cell += ch;
+      recordHasContent = true;
+    }
+  }
+  if (quoted)
+    return {
+      records,
+      error: `Malformed CSV: unterminated quoted field at line ${recordNumber}`,
+    };
+  if (cell.length > 0 || cells.length > 0 || recordHasContent) pushRecord();
+  if (records.length > PERSISTENT_IMPORT_LIMITS.maxRows + 1)
+    return {
+      records,
+      error: `CSV exceeds ${PERSISTENT_IMPORT_LIMITS.maxRows} data rows`,
+    };
+  return { records, error: null };
+}
+
+function isPositiveInt32(raw: string): boolean {
+  if (!/^[0-9]{1,10}$/.test(raw)) return false;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647;
+}
+
+function isPositiveDecimal(
+  raw: string,
+  maxDecimals: number,
+  maxIntegerDigits: number,
+): boolean {
+  if (!/^\d+(?:\.\d+)?$/.test(raw)) return false;
+  if (raw.split(".")[0]!.length > maxIntegerDigits) return false;
+  const fraction = raw.split(".")[1];
+  if (fraction !== undefined && fraction.length > maxDecimals) return false;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0;
+}
+
+/** Parse a CSV using caller-selected zero-based header indices. Values remain plain strings. */
+export function parseMappedCatalogCsv(
+  csvText: string,
+  mapping: PersistentImportMapping,
+): PersistentImportResult {
+  const errors: string[] = [];
+  const mapped = { ...mapping };
+  const tooLargeResult = (): PersistentImportResult => ({
+    headers: [],
+    mapping: mapped,
+    rows: [],
+    errors: [`CSV exceeds ${PERSISTENT_IMPORT_LIMITS.maxBytes} UTF-8 bytes`],
+    skipped: 0,
+  });
+  if (csvText.length > PERSISTENT_IMPORT_LIMITS.maxBytes) return tooLargeResult();
+  if (new TextEncoder().encode(csvText).byteLength > PERSISTENT_IMPORT_LIMITS.maxBytes) {
+    return tooLargeResult();
+  }
+  const parsed = parseStrictCsv(csvText);
+  const headers = parsed.records[0]?.cells ?? [];
+  const empty = (
+    rows: PersistentImportRow[] = [],
+    skipped = 0,
+  ): PersistentImportResult => ({ headers, mapping: mapped, rows, errors, skipped });
+  if (parsed.error) errors.push(parsed.error);
+  if (errors.length) return empty();
+  if (headers.length > PERSISTENT_IMPORT_LIMITS.maxColumns)
+    errors.push(`CSV exceeds ${PERSISTENT_IMPORT_LIMITS.maxColumns} columns`);
+  if (parsed.records.length === 0) errors.push("CSV is empty");
+  if (parsed.records.length > PERSISTENT_IMPORT_LIMITS.maxRows + 1)
+    errors.push(`CSV exceeds ${PERSISTENT_IMPORT_LIMITS.maxRows} data rows`);
+  for (const col of PERSISTENT_REQUIRED)
+    if (mapping[col] === undefined) errors.push(`Missing required mapping: ${col}`);
+  const usedIndices = Object.values(mapping).filter(
+    (index): index is number => index !== undefined,
+  );
+  if (new Set(usedIndices).size !== usedIndices.length)
+    errors.push("Duplicate mapping: each CSV column may be mapped only once");
+  for (const [column, index] of Object.entries(mapping)) {
+    if (index === undefined) continue;
+    if (!Number.isInteger(index) || index < 0 || index >= headers.length)
+      errors.push(`Invalid CSV header index for ${column}`);
+  }
+  if (errors.length) return empty();
+
+  const records = parsed.records.slice(1);
+  for (const record of parsed.records) {
+    if (record.cells.length > PERSISTENT_IMPORT_LIMITS.maxColumns)
+      errors.push(
+        `Line ${record.rowNumber}: exceeds ${PERSISTENT_IMPORT_LIMITS.maxColumns} columns`,
+      );
+    if (
+      record.cells.some((value) => value.length > PERSISTENT_IMPORT_LIMITS.maxCellChars)
+    )
+      errors.push(
+        `Line ${record.rowNumber}: cell exceeds ${PERSISTENT_IMPORT_LIMITS.maxCellChars} characters`,
+      );
+    if (record.cells.length !== headers.length)
+      errors.push(`Line ${record.rowNumber}: column count does not match header`);
+  }
+  if (errors.length) return empty();
+
+  const rows: PersistentImportRow[] = records.map((record) => {
+    const values = { ...EMPTY_PERSISTENT_VALUES };
+    for (const column of PERSISTENT_IMPORT_COLUMNS) {
+      const index = mapping[column];
+      if (index !== undefined) values[column] = record.cells[index] ?? "";
+    }
+    const client_errors: string[] = [];
+    for (const column of PERSISTENT_REQUIRED)
+      if (values[column].trim() === "") client_errors.push(`${column}: required`);
+    if (values.sku !== values.sku.trim())
+      client_errors.push("sku: must not have surrounding whitespace");
+    for (const [field, max] of [
+      ["sku", 80],
+      ["title", 180],
+      ["category", 80],
+      ["sell_unit_label", 120],
+    ] as const) {
+      if (values[field].length > max)
+        client_errors.push(`${field}: exceeds ${max} characters`);
+    }
+    for (const field of ["units_per_sell_unit", "moq", "order_step"] as const) {
+      if (values[field] !== "" && !isPositiveInt32(values[field]))
+        client_errors.push(`${field}: must be a positive 32-bit integer`);
+    }
+    if (values.pack_amount !== "" && !isPositiveDecimal(values.pack_amount, 3, 9))
+      client_errors.push(
+        "pack_amount: must be a positive decimal with at most 3 decimal places",
+      );
+    if (values.price_amount !== "" && !isPositiveDecimal(values.price_amount, 4, 12))
+      client_errors.push(
+        "price_amount: must be a positive decimal with at most 4 decimal places",
+      );
+    if (values.currency !== "" && !/^[A-Z]{3}$/.test(values.currency))
+      client_errors.push("currency: must be an explicit three-letter uppercase code");
+    if (values.pack_base_unit !== "" && !PERSISTENT_UNITS.has(values.pack_base_unit))
+      client_errors.push("pack_base_unit: expected kg, l or piece");
+    if (values.availability !== "" && !PERSISTENT_AVAILABILITY.has(values.availability))
+      client_errors.push(
+        "availability: expected in_stock, low_stock, out_of_stock or on_request",
+      );
+    return { row_number: record.rowNumber, values, client_errors };
+  });
+  return { headers, mapping: mapped, rows, errors, skipped: 0 };
+}

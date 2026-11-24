@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   CSV_TEMPLATE,
   parseCatalogCsv,
+  parseMappedCatalogCsv,
+  PERSISTENT_IMPORT_LIMITS,
   resolveImportRows,
   sanitizeCell,
   IMPORT_LIMITS,
@@ -135,5 +137,141 @@ describe("resolveImportRows: unchanged rows are not queued for writing", () => {
     ]);
     expect(resolved.summary.updated).toBe(1);
     expect(resolved.resolved.map((r) => r.sku)).toEqual(["SAME-1", "NEW-1"]);
+  });
+});
+
+describe("persistent mapped supplier catalog import", () => {
+  const headers = [
+    "sku",
+    "title",
+    "category",
+    "sell_unit_label",
+    "units_per_sell_unit",
+    "pack_amount",
+    "pack_base_unit",
+    "price_amount",
+    "currency",
+    "moq",
+    "order_step",
+    "availability",
+  ];
+  const mapping = Object.fromEntries(
+    headers.map((header, index) => [header, index]),
+  ) as Record<string, number>;
+  const valid = [
+    "SKU-1",
+    "Plain",
+    "Dry",
+    "bag",
+    "1",
+    "0.125",
+    "kg",
+    "12.3456",
+    "KZT",
+    "2",
+    "1",
+    "",
+  ];
+  const csv = (rows: readonly (readonly string[])[]): string =>
+    [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+
+  it("returns raw formula-like text without sanitising or interpreting it", () => {
+    const result = parseMappedCatalogCsv(
+      csv([[...valid.slice(0, 1), "=1+1", ...valid.slice(2)]]),
+      mapping,
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.rows[0]?.values.title).toBe("=1+1");
+    expect(result.rows[0]?.client_errors).toEqual([]);
+    expect(result.rows[0]?.row_number).toBe(2);
+  });
+
+  it("supports BOM, CRLF, escaped quotes, commas, and newlines inside quotes", () => {
+    const row = [...valid];
+    row[1] = "\"Large, ''special'' item\"";
+    const text = `\uFEFF${headers.join(",")}\r\n${valid[0]},"Line one\r\nLine ""two"", comma",${valid.slice(2).join(",")}\r\n`;
+    const result = parseMappedCatalogCsv(text, mapping);
+    expect(result.errors).toEqual([]);
+    expect(result.rows[0]?.values.title).toBe('Line one\nLine "two", comma');
+  });
+
+  it("blocks duplicate mappings and missing required mappings", () => {
+    const duplicate = { ...mapping, title: 0 };
+    expect(parseMappedCatalogCsv(csv([valid]), duplicate).errors.join(" ")).toMatch(
+      /Duplicate mapping/,
+    );
+    const missing = { ...mapping };
+    delete missing.currency;
+    expect(parseMappedCatalogCsv(csv([valid]), missing).errors.join(" ")).toMatch(
+      /currency/,
+    );
+  });
+
+  it("validates explicit currencies, decimals, units, bounds, text lengths, and enum values", () => {
+    const row = [...valid];
+    row[4] = "2147483648";
+    row[5] = "1.0001";
+    row[6] = "lb";
+    row[7] = "1.12345";
+    row[8] = "kzt";
+    row[9] = "0";
+    row[11] = "available";
+    const result = parseMappedCatalogCsv(csv([row]), mapping);
+    expect(result.rows[0]?.client_errors).toHaveLength(7);
+    expect(result.rows[0]?.values.currency).toBe("kzt");
+  });
+
+  it("accepts bounded leading-zero integers but flags whitespace-padded SKUs", () => {
+    const row = [...valid];
+    row[4] = "0001";
+    row[9] = "0002";
+    row[10] = "0001";
+    expect(parseMappedCatalogCsv(csv([row]), mapping).rows[0]?.client_errors).toEqual([]);
+
+    row[0] = " SKU-1 ";
+    expect(parseMappedCatalogCsv(csv([row]), mapping).rows[0]?.client_errors).toContain(
+      "sku: must not have surrounding whitespace",
+    );
+  });
+
+  it("rejects UTF-8 byte overflow and stops parsing after the maximum row count", () => {
+    const multibyteText = "界".repeat(PERSISTENT_IMPORT_LIMITS.maxBytes / 2);
+    expect(parseMappedCatalogCsv(multibyteText, mapping).errors.join(" ")).toMatch(
+      /bytes/,
+    );
+
+    const tooManyRows = [
+      headers.join(","),
+      ...Array.from({ length: PERSISTENT_IMPORT_LIMITS.maxRows + 1 }, () =>
+        valid.join(","),
+      ),
+    ].join("\n");
+    expect(parseMappedCatalogCsv(tooManyRows, mapping).errors.join(" ")).toMatch(
+      /data rows/,
+    );
+  });
+
+  it("uses blank availability as unknown and blocks excess size, rows, columns, cells, and malformed quotes", () => {
+    expect(parseMappedCatalogCsv(csv([valid]), mapping).rows[0]?.client_errors).toEqual(
+      [],
+    );
+    expect(parseMappedCatalogCsv(csv([valid, valid]), mapping).rows).toHaveLength(2);
+    expect(
+      parseMappedCatalogCsv(
+        `${headers.join(",")}\n${valid.join(",")}"oops`,
+        mapping,
+      ).errors.join(" "),
+    ).toMatch(/Malformed/);
+    expect(
+      parseMappedCatalogCsv(
+        "x".repeat(PERSISTENT_IMPORT_LIMITS.maxBytes + 1),
+        mapping,
+      ).errors.join(" "),
+    ).toMatch(/bytes/);
+    const longCell = [...valid];
+    longCell[1] = "x".repeat(PERSISTENT_IMPORT_LIMITS.maxCellChars + 1);
+    expect(parseMappedCatalogCsv(csv([longCell]), mapping).errors.join(" ")).toMatch(
+      /characters/,
+    );
   });
 });

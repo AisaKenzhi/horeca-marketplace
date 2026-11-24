@@ -112,6 +112,7 @@ const offers: CatalogOfferRow[] = [
   {
     id: offerId,
     supplier_organization_id: "supplier-org-1",
+    product_id: null,
     supplier_sku: "FLOUR-1",
     title: "Flour",
     category: "Grocery",
@@ -135,6 +136,7 @@ const offers: CatalogOfferRow[] = [
   {
     id: "offer-2",
     supplier_organization_id: "supplier-org-1",
+    product_id: null,
     supplier_sku: "OIL-1",
     title: "Oil",
     category: "Grocery",

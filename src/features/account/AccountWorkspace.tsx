@@ -4,6 +4,7 @@ import { getSupabaseClient } from "@/data/supabase/client";
 import { BuyerProcurementListsPanel } from "@/features/account/BuyerProcurementListsPanel";
 import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
 import { OrganizationAccess } from "@/features/account/OrganizationAccess";
+import { SupplierCatalogImportPanel } from "@/features/account/SupplierCatalogImportPanel";
 import {
   acceptOrganizationInvitation,
   canManageOrganization,
@@ -251,16 +252,24 @@ function AccountWorkspaceReady({
   const [actionError, setActionError] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
   const acceptedToken = useRef<string | null>(null);
+  const loadedUserId = useRef<string | null>(null);
   const [invitationBusy, setInvitationBusy] = useState(false);
   const [inviteNotice, setInviteNotice] = useState("");
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    if (loadedUserId.current !== user.id) {
+      loadedUserId.current = null;
+      setSnapshot(EMPTY_WORKSPACE);
+      setLoading(true);
+    }
     setLoadError("");
     void loadWorkspace(client)
       .then((workspace) => {
-        if (active) setSnapshot(workspace);
+        if (active) {
+          setSnapshot(workspace);
+          loadedUserId.current = user.id;
+        }
       })
       .catch((error: unknown) => {
         if (active) setLoadError(workspaceErrorMessage(error));
@@ -637,6 +646,18 @@ function AccountWorkspaceReady({
                 </>
               )}
             </section>
+          ) : null}
+
+          {activeOrganization?.organization_type === "supplier" &&
+          activeProfile &&
+          canManageSupplierCatalog(activeOrganization.role) ? (
+            <SupplierCatalogImportPanel
+              client={client}
+              organizationId={activeOrganization.id}
+              role={activeOrganization.role}
+              verificationStatus={activeProfile.verification_status}
+              onApplied={() => setRefreshKey((value) => value + 1)}
+            />
           ) : null}
         </>
       ) : null}
@@ -1224,7 +1245,12 @@ function AccountWorkspaceWithClient({
     );
   }
   return user ? (
-    <AccountWorkspaceReady client={client} user={user} inviteToken={inviteToken} />
+    <AccountWorkspaceReady
+      key={user.id}
+      client={client}
+      user={user}
+      inviteToken={inviteToken}
+    />
   ) : (
     <AccountAuth client={client} inviteToken={inviteToken} />
   );

@@ -15,6 +15,7 @@ import {
 const updatedOffer: CatalogOfferRow = {
   id: "offer-1",
   supplier_organization_id: "supplier-1",
+  product_id: null,
   supplier_sku: "SKU-1",
   title: "Flour",
   category: "Grocery",
@@ -315,5 +316,162 @@ describe("organization access RPC contract", () => {
     await expect(removeOrganizationMember(client, "org", "member")).rejects.toMatchObject<
       Partial<WorkspaceError>
     >({ code: "operation_failed" });
+  });
+});
+
+import {
+  applySupplierCatalogImport,
+  previewSupplierCatalogImport,
+  type SupplierCatalogImportPayloadRow,
+} from "./workspace";
+
+const importId = "50000000-0000-4000-8000-000000000001";
+const idempotencyKey = "50000000-0000-4000-8000-000000000002";
+const importPayload: SupplierCatalogImportPayloadRow[] = [
+  {
+    row_number: 2,
+    values: {
+      sku: "SYNTHETIC-SKU",
+      title: "Synthetic item",
+      category: "Test",
+      sell_unit_label: "case",
+      units_per_sell_unit: "1",
+      pack_amount: "1",
+      pack_base_unit: "piece",
+      price_amount: "10.25",
+      currency: "EUR",
+      moq: "1",
+      order_step: "1",
+      availability: "unknown",
+    },
+    client_errors: [],
+  },
+];
+const importPreview = {
+  import_id: importId,
+  status: "previewed",
+  summary: { added: 1, updated: 0, unchanged: 0, errors: 0 },
+  rows: [
+    {
+      row_number: 2,
+      sku: "SYNTHETIC-SKU",
+      status: "added",
+      errors: [],
+      changes: ["новая позиция"],
+      expected_version: null,
+    },
+  ],
+};
+
+describe("persistent supplier catalog import client boundary", () => {
+  function supplierClient(role: MembershipRole = "catalog_operator") {
+    const base = createClient({
+      role,
+      organizationType: "supplier",
+      verificationStatus: "approved",
+    });
+    const rpc = vi.fn().mockResolvedValue({ data: importPreview, error: null });
+    const client = {
+      from: base.client.from.bind(base.client),
+      rpc,
+    } as unknown as WorkspaceClient;
+    return { client, rpc, filters: base.filters };
+  }
+
+  it("persists the mapped full-row payload to the server preview RPC for the selected tenant", async () => {
+    const { client, rpc, filters } = supplierClient();
+
+    await expect(
+      previewSupplierCatalogImport(client, "supplier-1", idempotencyKey, importPayload),
+    ).resolves.toMatchObject({
+      import_id: importId,
+      status: "previewed",
+      summary: { added: 1, errors: 0 },
+    });
+
+    expect(rpc).toHaveBeenCalledWith("preview_supplier_catalog_import", {
+      p_organization_id: "supplier-1",
+      p_idempotency_key: idempotencyKey,
+      p_rows: [
+        {
+          row_number: 2,
+          values: { ...importPayload[0]!.values },
+          client_errors: [],
+        },
+      ],
+    });
+    expect(filters).toContainEqual({
+      table: "organization_memberships",
+      column: "organization_id",
+      value: "supplier-1",
+    });
+  });
+
+  it("denies order-only members before making an import RPC", async () => {
+    const { client, rpc } = supplierClient("order_operator");
+
+    await expect(
+      previewSupplierCatalogImport(client, "supplier-1", idempotencyKey, importPayload),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "permission" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("allows pending suppliers to stage a server preview, leaving changed-SKU policy to the database", async () => {
+    const base = createClient({
+      role: "owner",
+      organizationType: "supplier",
+      verificationStatus: "pending",
+    });
+    const rpc = vi.fn().mockResolvedValue({ data: importPreview, error: null });
+    const client = {
+      from: base.client.from.bind(base.client),
+      rpc,
+    } as unknown as WorkspaceClient;
+
+    await expect(
+      previewSupplierCatalogImport(client, "supplier-1", idempotencyKey, importPayload),
+    ).resolves.toMatchObject({ import_id: importId });
+    expect(rpc).toHaveBeenCalledOnce();
+  });
+
+  it("rechecks active supplier membership before apply and passes only tenant and server-issued import IDs", async () => {
+    const { client, rpc } = supplierClient();
+    rpc.mockResolvedValueOnce({
+      data: {
+        import_id: importId,
+        status: "applied",
+        summary: { added: 1, updated: 0, unchanged: 0, errors: 0 },
+      },
+      error: null,
+    });
+
+    await expect(
+      applySupplierCatalogImport(client, "supplier-1", importId),
+    ).resolves.toMatchObject({ status: "applied", import_id: importId });
+    expect(rpc).toHaveBeenCalledWith("apply_supplier_catalog_import", {
+      p_organization_id: "supplier-1",
+      p_import_id: importId,
+    });
+  });
+
+  it("rejects malformed or forged import UUIDs before RPC", async () => {
+    const { client, rpc } = supplierClient();
+
+    await expect(
+      applySupplierCatalogImport(client, "supplier-1", "not-an-import-id"),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "invalid" });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("maps changed payload reuse to an idempotency conflict rather than an offer error", async () => {
+    const { client, rpc } = supplierClient();
+    rpc.mockResolvedValueOnce({
+      data: null,
+      error: { code: "P0001", message: "idempotency key conflict" },
+    });
+
+    await expect(
+      previewSupplierCatalogImport(client, "supplier-1", idempotencyKey, importPayload),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "idempotency_conflict" });
   });
 });

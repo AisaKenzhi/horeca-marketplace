@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PersistentImportRow } from "@/domain/catalogImport";
 import type {
   BuyerDraftCartItemRow,
   BuyerDraftCartRow,
@@ -8,6 +9,7 @@ import type {
   CatalogAvailability,
   CatalogOfferRow,
   Database,
+  Json,
   MembershipRole,
   OrganizationRow,
   OrganizationType,
@@ -71,6 +73,8 @@ export type WorkspaceErrorCode =
   | "duplicate"
   | "unavailable"
   | "not_found"
+  | "stale_preview"
+  | "idempotency_conflict"
   | "operation_failed";
 
 export function canManageSupplierCatalog(role: MembershipRole): boolean {
@@ -85,7 +89,7 @@ export class WorkspaceError extends Error {
 }
 
 const OFFER_COLUMNS =
-  "id,supplier_organization_id,supplier_sku,title,category,sell_unit_label,units_per_sell_unit,pack_amount,pack_base_unit,price_amount,currency,moq,order_step,availability,price_valid_until,is_published,price_observed_at,availability_observed_at,version,created_at,updated_at" as const;
+  "id,supplier_organization_id,product_id,supplier_sku,title,category,sell_unit_label,units_per_sell_unit,pack_amount,pack_base_unit,price_amount,currency,moq,order_step,availability,price_valid_until,is_published,price_observed_at,availability_observed_at,version,created_at,updated_at" as const;
 
 function errorCode(error: unknown): string | null {
   if (typeof error !== "object" || error === null || !("code" in error)) return null;
@@ -98,7 +102,18 @@ function mapError(error: unknown): WorkspaceError {
   if (code === "23505") return new WorkspaceError("duplicate");
   if (code === "42501") return new WorkspaceError("permission");
   if (code === "PGRST116" || code === "P0002") return new WorkspaceError("not_found");
-  if (code === "P0001") return new WorkspaceError("offer_unavailable");
+  if (code === "P0001") {
+    const message =
+      typeof error === "object" && error !== null && "message" in error
+        ? error.message
+        : null;
+    return new WorkspaceError(
+      message === "idempotency key conflict"
+        ? "idempotency_conflict"
+        : "offer_unavailable",
+    );
+  }
+  if (code === "40001") return new WorkspaceError("stale_preview");
   if (code === "22P02" || code === "23514" || code === "23503") {
     return new WorkspaceError("invalid");
   }
@@ -160,6 +175,10 @@ export function workspaceErrorMessage(error: unknown): string {
         return "Такая организация, точка или SKU уже существует.";
       case "not_found":
         return "Запись больше недоступна. Обновите страницу и попробуйте ещё раз.";
+      case "stale_preview":
+        return "Каталог изменился после предпросмотра. Загрузите файл и выполните предпросмотр заново.";
+      case "idempotency_conflict":
+        return "Ключ импорта уже использован с другим содержимым. Начните предпросмотр заново.";
       case "unavailable":
         return "Не удалось связаться с рабочим контуром. Проверьте подключение и повторите попытку.";
       case "operation_failed":
@@ -236,6 +255,211 @@ export async function loadWorkspace(client: WorkspaceClient): Promise<WorkspaceS
   );
 
   return { organizations, locations, supplierProfiles, offers, catalog };
+}
+
+export type SupplierCatalogImportRowStatus = "added" | "updated" | "unchanged" | "error";
+
+export type SupplierCatalogImportPayloadRow = PersistentImportRow;
+
+export interface SupplierCatalogImportPreviewRow {
+  readonly row_number: number;
+  readonly sku: string | null;
+  readonly status: SupplierCatalogImportRowStatus;
+  readonly errors: readonly string[];
+  readonly changes: readonly string[];
+  readonly expected_version: number | null;
+}
+
+export interface SupplierCatalogImportSummary {
+  readonly added: number;
+  readonly updated: number;
+  readonly unchanged: number;
+  readonly errors: number;
+}
+
+export interface SupplierCatalogImportPreview {
+  readonly import_id: string;
+  readonly status: "previewed" | "blocked" | "applied";
+  readonly summary: SupplierCatalogImportSummary;
+  readonly rows: readonly SupplierCatalogImportPreviewRow[];
+}
+
+export interface SupplierCatalogImportResult {
+  readonly import_id: string;
+  readonly status: "applied";
+  readonly summary: SupplierCatalogImportSummary;
+}
+
+function isJsonObject(value: Json): value is { [key: string]: Json | undefined } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requiredImportString(value: Json | undefined): string {
+  if (typeof value !== "string") throw new WorkspaceError("operation_failed");
+  return value;
+}
+
+function requiredImportCount(value: Json | undefined): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new WorkspaceError("operation_failed");
+  }
+  return value;
+}
+
+function decodeImportSummary(value: Json | undefined): SupplierCatalogImportSummary {
+  if (!value || !isJsonObject(value)) throw new WorkspaceError("operation_failed");
+  return {
+    added: requiredImportCount(value.added),
+    updated: requiredImportCount(value.updated),
+    unchanged: requiredImportCount(value.unchanged),
+    errors: requiredImportCount(value.errors),
+  };
+}
+
+function decodeImportPreview(value: Json): SupplierCatalogImportPreview {
+  if (!isJsonObject(value) || !Array.isArray(value.rows)) {
+    throw new WorkspaceError("operation_failed");
+  }
+  const status = requiredImportString(value.status);
+  if (status !== "previewed" && status !== "blocked" && status !== "applied") {
+    throw new WorkspaceError("operation_failed");
+  }
+  const rows: SupplierCatalogImportPreviewRow[] = value.rows.map((item) => {
+    if (!isJsonObject(item)) throw new WorkspaceError("operation_failed");
+    const rowNumber = requiredImportCount(item.row_number);
+    const rowStatus = requiredImportString(item.status);
+    if (
+      rowStatus !== "added" &&
+      rowStatus !== "updated" &&
+      rowStatus !== "unchanged" &&
+      rowStatus !== "error"
+    ) {
+      throw new WorkspaceError("operation_failed");
+    }
+    if (
+      !Array.isArray(item.errors) ||
+      !item.errors.every((entry) => typeof entry === "string")
+    ) {
+      throw new WorkspaceError("operation_failed");
+    }
+    if (
+      !Array.isArray(item.changes) ||
+      !item.changes.every((entry) => typeof entry === "string")
+    ) {
+      throw new WorkspaceError("operation_failed");
+    }
+    const version = item.expected_version;
+    if (
+      version !== null &&
+      (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1)
+    ) {
+      throw new WorkspaceError("operation_failed");
+    }
+    return {
+      row_number: rowNumber,
+      sku: item.sku === null ? null : requiredImportString(item.sku),
+      status: rowStatus,
+      errors: item.errors,
+      changes: item.changes,
+      expected_version: version,
+    };
+  });
+  return {
+    import_id: requiredImportString(value.import_id),
+    status,
+    summary: decodeImportSummary(value.summary),
+    rows,
+  };
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+}
+
+async function assertSupplierCatalogImportAccess(
+  client: WorkspaceClient,
+  organizationId: string,
+): Promise<void> {
+  const membershipResult = await client
+    .from("organization_memberships")
+    .select("role")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+  if (membershipResult.error) throw mapError(membershipResult.error);
+  if (!membershipResult.data || !canManageSupplierCatalog(membershipResult.data.role)) {
+    throw new WorkspaceError("permission");
+  }
+
+  const [organizationResult, profileResult] = await Promise.all([
+    client
+      .from("organizations")
+      .select("organization_type")
+      .eq("id", organizationId)
+      .maybeSingle(),
+    client
+      .from("supplier_profiles")
+      .select("verification_status")
+      .eq("organization_id", organizationId)
+      .maybeSingle(),
+  ]);
+  if (organizationResult.error) throw mapError(organizationResult.error);
+  if (profileResult.error) throw mapError(profileResult.error);
+  const status = profileResult.data?.verification_status;
+  if (
+    organizationResult.data?.organization_type !== "supplier" ||
+    (status !== "pending" && status !== "approved")
+  ) {
+    throw new WorkspaceError("permission");
+  }
+}
+
+/** Persist a server-side, tenant-scoped preview; the database revalidates every row. */
+export async function previewSupplierCatalogImport(
+  client: WorkspaceClient,
+  organizationId: string,
+  idempotencyKey: string,
+  rows: readonly SupplierCatalogImportPayloadRow[],
+): Promise<SupplierCatalogImportPreview> {
+  if (!isUuid(idempotencyKey) || rows.length < 1 || rows.length > 2_000) {
+    throw new WorkspaceError("invalid");
+  }
+  await assertSupplierCatalogImportAccess(client, organizationId);
+  const payload: Json[] = rows.map((row) => ({
+    row_number: row.row_number,
+    values: { ...row.values },
+    client_errors: [...row.client_errors],
+  }));
+  const { data, error } = await client.rpc("preview_supplier_catalog_import", {
+    p_organization_id: organizationId,
+    p_idempotency_key: idempotencyKey,
+    p_rows: payload,
+  });
+  return decodeImportPreview(unwrap(data, error));
+}
+
+/** Apply only the immutable preview staged for this organization and actor scope. */
+export async function applySupplierCatalogImport(
+  client: WorkspaceClient,
+  organizationId: string,
+  importId: string,
+): Promise<SupplierCatalogImportResult> {
+  if (!isUuid(importId)) throw new WorkspaceError("invalid");
+  await assertSupplierCatalogImportAccess(client, organizationId);
+  const { data, error } = await client.rpc("apply_supplier_catalog_import", {
+    p_organization_id: organizationId,
+    p_import_id: importId,
+  });
+  const result = unwrap(data, error);
+  if (!isJsonObject(result) || requiredImportString(result.status) !== "applied") {
+    throw new WorkspaceError("operation_failed");
+  }
+  return {
+    import_id: requiredImportString(result.import_id),
+    status: "applied",
+    summary: decodeImportSummary(result.summary),
+  };
 }
 
 export async function createOrganization(
