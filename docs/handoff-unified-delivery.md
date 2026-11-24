@@ -11,7 +11,7 @@
 
 - Target/base: `feat/product-ready-tenant-foundation-2026-11-23` @ `41e47ec57e76b541c21970bacf349366db08a892`.
 - Integration branch: `feat/horeca-unified-delivery-2026-11-24`.
-- Integration HEAD: `db1e5e3edb48df04f251e30ff7adadda3a659166` (будет заменено на финальный SHA перед публикацией).
+- Integration code HEAD: `db1e5e3edb48df04f251e30ff7adadda3a659166` (последний код-коммит `80d2329..cecce45` + docs `db1e5e3`). Финальный HEAD ветки — последний коммит PR #29, виден в GitHub; это self-referencing docs-изменение, поэтому точный финальный SHA не дублируется в тексте.
 - Logical commits (в порядке):
   1. `80d2329` — port PR #28: buyer locations + Task 1 handoff map.
   2. `06a1ebe` — port supplier-suborder workflow backend (`8424cbd`).
