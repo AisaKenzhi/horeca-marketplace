@@ -21,6 +21,7 @@ import {
 import { checkOrderQuantity, type QuantityProblem } from "./packaging";
 import {
   DEFAULT_FRESHNESS_CONFIG,
+  describeAvailability,
   evaluateFreshness,
   type Freshness,
   type FreshnessConfig,
@@ -79,9 +80,10 @@ export interface SuborderGroup {
   /** Whether the supplier covers the selected delivery zone. */
   readonly zoneCoverage: ZoneCoverage;
   /**
-   * True only when every line is valid, the supplier minimum is met, and the
-   * supplier covers the location zone. Stale prices are NOT silently accepted:
-   * they are surfaced as blockers so the buyer must re-confirm.
+   * True only when every line is valid, availability is fresh and in stock,
+   * the supplier minimum is met, and the supplier covers the location zone.
+   * Stale prices are NOT silently accepted: they are surfaced as blockers so
+   * the buyer must re-confirm.
    */
   readonly readyToSubmit: boolean;
   readonly blockers: readonly string[];
@@ -254,6 +256,23 @@ export function computeSuborderGroup(
         "Цена изменилась с момента добавления — подтвердите актуальную цену.",
       );
       needsPriceConfirmation = true;
+    }
+    const availabilityFreshness = evaluateFreshness(c.offer.availability, nowIso, config);
+    if (c.offer.availability.value === null) {
+      blockers.push("Наличие не указано и не считается подтверждённым.");
+    } else {
+      if (availabilityFreshness.state === "stale") {
+        blockers.push("Сведения о наличии устарели; наличие нужно уточнить.");
+      } else if (availabilityFreshness.state === "unknown") {
+        blockers.push("Свежесть сведений о наличии не удалось проверить.");
+      }
+      if (c.offer.availability.value !== "in_stock") {
+        blockers.push(
+          `Доступность «${describeAvailability(
+            c.offer.availability,
+          )}» не подтверждает достаточное количество; требуется уточнение.`,
+        );
+      }
     }
   }
   if (!minimumMet) {

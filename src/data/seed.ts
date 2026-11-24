@@ -492,9 +492,9 @@ export const buyerLists: readonly BuyerList[] = [
 /* ----------------------------- Basket ---------------------------------- */
 
 /*
- * ONE basket per buyer org. The café has a ready-to-submit demo basket; the
- * hotel has an empty basket at a hotel location so a second tenant can be
- * exercised without touching the café's lines.
+ * ONE basket per buyer org. The café has an in-stock Alpha group that is
+ * ready to submit and a low-stock Beta group that must be confirmed first; the
+ * hotel has an empty basket at a hotel location for a second-tenant demo.
  */
 export const baskets: readonly Basket[] = [
   {
@@ -515,7 +515,7 @@ export const baskets: readonly Basket[] = [
         id: "bl-2" as Basket["lines"][number]["id"],
         offerId: asOfferId("off-beta-oil"),
         supplierId: asSupplierId("sup-beta"),
-        // 12 x 900 = 10 800 >= Beta minimum of 10 000.
+        // The value meets Beta's minimum, but low_stock still needs confirmation.
         quantity: 12,
         addedAtPriceSnapshot: money(900),
         addedAt: asIso(hoursAgo(2)),

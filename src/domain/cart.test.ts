@@ -30,6 +30,19 @@ function cart(
   });
 }
 
+function groupWithAvailability(availability: (typeof offerAlphaFlour)["availability"]) {
+  const offer = { ...offerAlphaFlour, availability };
+  const result = computeCart(
+    makeBasket([makeBasketLine("availability", offer, 6)]),
+    new Map<string, typeof offerAlphaFlour>([[offer.id, offer]]),
+    suppliersById,
+    { nowIso: NOW, locationZone: DEMO_ZONE },
+  );
+  const group = result.groups[0];
+  if (!group) throw new Error("expected one supplier group");
+  return group;
+}
+
 describe("cart -> supplier suborders", () => {
   it("splits a mixed basket into one group per supplier", () => {
     const result = cart([
@@ -135,6 +148,35 @@ describe("cart -> supplier suborders", () => {
     expect(group.lines[0]!.problem?.kind).toBe("price_unknown");
     expect(group.lines[0]!.subtotal.amount).toBe(0);
     expect(group.readyToSubmit).toBe(false);
+  });
+
+  it("keeps a fresh in-stock offer eligible for submission", () => {
+    const group = groupWithAvailability({ value: "in_stock", observedAt: NOW });
+    expect(group.readyToSubmit).toBe(true);
+  });
+
+  it.each(["low_stock", "out_of_stock", "on_request"] as const)(
+    "blocks fresh %s availability from submission",
+    (availability) => {
+      const group = groupWithAvailability({ value: availability, observedAt: NOW });
+      expect(group.readyToSubmit).toBe(false);
+      expect(group.blockers.some((blocker) => blocker.includes("Доступность"))).toBe(
+        true,
+      );
+    },
+  );
+
+  it.each([
+    ["unknown", { value: null, observedAt: null }],
+    ["missing observation time", { value: "in_stock", observedAt: null }],
+    ["stale observation", { value: "in_stock", observedAt: "2026-11-17T12:00:00.000Z" }],
+    ["future observation", { value: "in_stock", observedAt: "2026-11-20T12:00:00.000Z" }],
+  ] as const)("blocks %s availability from submission", (_case, availability) => {
+    const group = groupWithAvailability(availability);
+    expect(group.readyToSubmit).toBe(false);
+    expect(
+      group.blockers.some((blocker) => blocker.toLowerCase().includes("налич")),
+    ).toBe(true);
   });
 
   it("uses the live price, not a stale snapshot, for subtotals", () => {

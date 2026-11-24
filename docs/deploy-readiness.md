@@ -1,9 +1,17 @@
 # Deploy readiness and launch gates (P0)
 
-This document is the honest status of what could be deployed and what could
-**not**. It separates three levels the project uses everywhere: **local** (this
-repo, synthetic data), **staging** (does not exist yet), and **production (live)**
-(not permitted yet).
+> **Snapshot scope:** The launch gates, release-candidate details, deployment
+> claims, and verification results below describe `da8f42a` on post-hardening
+> `main`; they are historical, not a current assessment of
+> `feat/product-ready-tenant-foundation-2026-11-23`. That feature branch adds an
+> opt-in Supabase tenant/catalog foundation and local database tests (see
+> [tenant foundation](tenant-foundation.md)). Its existence and tests do not
+> mean the branch was deployed or change what this RC snapshot records.
+
+This is the honest status at that snapshot commit of what could be deployed and
+what could **not**. It separates three levels the project uses everywhere:
+**local** (that repo state, synthetic data), **staging** (does not exist yet),
+and **production (live)** (not permitted yet).
 
 > Bottom line: the repo is a **deployable static demo**, not a launchable
 > marketplace. There is no backend, no real auth, no payments, no legal operator

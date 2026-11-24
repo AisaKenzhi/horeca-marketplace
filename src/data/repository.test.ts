@@ -21,7 +21,8 @@ import { money } from "@/domain/money";
 import { parseCatalogCsv, resolveImportRows } from "@/domain/catalogImport";
 import type { Basket } from "@/domain/entities";
 
-function makeRepo(): Repository {
+/** Most workflow tests need both groups ready; availability tests pass offers explicitly. */
+function makeRepo(offerSet: typeof offers = offersWithBetaInStock()): Repository {
   return new Repository(
     buildInitialState({
       organizations,
@@ -29,11 +30,25 @@ function makeRepo(): Repository {
       memberships,
       suppliers,
       products,
-      offers,
+      offers: offerSet,
       buyerLists,
       baskets: seedBaskets,
       notifications,
     }),
+  );
+}
+
+function offersWithBetaInStock(): typeof offers {
+  return offers.map((offer) =>
+    offer.id === "off-beta-oil"
+      ? {
+          ...offer,
+          availability: {
+            value: "in_stock" as const,
+            observedAt: "2026-11-19T12:00:00.000Z",
+          },
+        }
+      : offer,
   );
 }
 
@@ -57,7 +72,7 @@ const viewer: SessionContext = {
   nowIso: "2026-11-19T12:05:00.000Z",
 };
 
-/** The seed basket now defaults to a ready state for both suppliers. */
+/** Submit currently-ready groups; the raw demo seed intentionally holds low-stock Beta back. */
 function submitReadyBasket(repo: Repository): {
   procurementId: string;
   suborderIds: string[];
@@ -66,20 +81,29 @@ function submitReadyBasket(repo: Repository): {
 }
 
 describe("repository: submit basket -> supplier suborders", () => {
-  it("creates one independent suborder per ready supplier and keeps unready lines", () => {
-    const repo = makeRepo();
+  it("submits only fresh in-stock groups and keeps low-stock lines", () => {
+    const repo = makeRepo(offers);
+    const preview = repo.submitPreview(buyer);
+    expect(preview.ready.map((group) => group.supplierId)).toEqual(["sup-alpha"]);
+    expect(preview.heldBack.map((group) => group.supplierId)).toEqual(["sup-beta"]);
+    expect(
+      preview.heldBack[0]!.blockers.some((blocker) => blocker.includes("Доступность")),
+    ).toBe(true);
+
     const { procurementId, suborderIds } = submitReadyBasket(repo);
     const state = repo.getState();
     expect(procurementId).toMatch(/^proc-/);
-    expect(suborderIds.length).toBeGreaterThan(0);
+    expect(suborderIds).toHaveLength(1);
+    expect(state.suborders.map((suborder) => suborder.supplierId)).toEqual(["sup-alpha"]);
     expect(new Set(state.suborders.map((s) => s.supplierId)).size).toBe(
       state.suborders.length,
     );
     expect(state.suborders.every((s) => s.status === "awaiting_supplier")).toBe(true);
+    expect(cafeBasket(repo).lines.map((line) => line.supplierId)).toEqual(["sup-beta"]);
   });
 
   it("submits only groups that meet the supplier minimum, holding the rest", () => {
-    const repo = makeRepo();
+    const repo = makeRepo(offersWithBetaInStock());
     // Drop Alpha below its minimum; only Beta should be submitted.
     const alphaLine = cafeBasket(repo).lines.find((l) => l.supplierId === "sup-alpha")!;
     repo.setBasketLineQuantity(buyer, alphaLine.id, 2); // 2 * 3200 = 6400 < 15000
@@ -105,7 +129,7 @@ describe("repository: submit basket -> supplier suborders", () => {
   });
 
   it("refuses to submit an empty basket", () => {
-    const repo = makeRepo();
+    const repo = makeRepo(offersWithBetaInStock());
     // Submit both ready groups, then the basket is empty.
     repo.submitBasket(buyer);
     expect(() => repo.submitBasket(buyer)).toThrow(/пуста/i);
@@ -264,7 +288,7 @@ describe("repository: supplier response and buyer decision", () => {
   });
 
   it("keeps sibling suborders independent: confirming one does not touch the other", () => {
-    const repo = makeRepo();
+    const repo = makeRepo(offersWithBetaInStock());
     submitReadyBasket(repo);
     const alphaSub = repo.getState().suborders.find((s) => s.supplierId === "sup-alpha")!;
     const betaSub = repo.getState().suborders.find((s) => s.supplierId === "sup-beta")!;
@@ -289,7 +313,7 @@ describe("repository: authorization boundaries", () => {
   });
 
   it("refuses a supplier response to another supplier's suborder", () => {
-    const repo = makeRepo();
+    const repo = makeRepo(offersWithBetaInStock());
     submitReadyBasket(repo);
     const betaSub = repo.getState().suborders.find((s) => s.supplierId === "sup-beta")!;
     expect(() => repo.confirmSuborderNoChange(supplierAlpha, betaSub.id)).toThrow(
