@@ -78,6 +78,25 @@ export type CatalogOfferRow = {
   updated_at: string;
 };
 
+export type BuyerProcurementListRow = {
+  id: string;
+  organization_id: string;
+  name: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BuyerProcurementListItemRow = {
+  id: string;
+  organization_id: string;
+  list_id: string;
+  catalog_offer_id: string;
+  quantity: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -134,6 +153,21 @@ export type Database = {
             "is_published" | "price_amount" | "currency" | "availability"
           >
         >
+      >;
+      buyer_procurement_lists: Table<
+        BuyerProcurementListRow,
+        { organization_id: string; name: string; created_by?: string },
+        Partial<Pick<BuyerProcurementListRow, "name">>
+      >;
+      buyer_procurement_list_items: Table<
+        BuyerProcurementListItemRow,
+        {
+          organization_id: string;
+          list_id: string;
+          catalog_offer_id: string;
+          quantity: number;
+        },
+        Partial<Pick<BuyerProcurementListItemRow, "quantity">>
       >;
     };
     Views: { [_ in never]: never };

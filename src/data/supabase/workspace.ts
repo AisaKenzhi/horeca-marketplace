@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  BuyerProcurementListItemRow,
+  BuyerProcurementListRow,
   BuyerLocationRow,
   CatalogAvailability,
   CatalogOfferRow,
@@ -470,4 +472,188 @@ export async function acceptOrganizationInvitation(
     p_token: token,
   });
   return unwrap(data, error);
+}
+
+export interface BuyerProcurementList extends BuyerProcurementListRow {}
+export interface BuyerProcurementListItem extends BuyerProcurementListItemRow {}
+export type BuyerProcurementListWithItems = BuyerProcurementListRow & {
+  items: BuyerProcurementListItemRow[];
+};
+
+export function canReadBuyerProcurement(role: MembershipRole): boolean {
+  return role === "owner" || role === "admin" || role === "buyer" || role === "viewer";
+}
+
+export function canManageBuyerProcurement(role: MembershipRole): boolean {
+  return role === "owner" || role === "admin" || role === "buyer";
+}
+
+function assertProcurementListAccess(role: MembershipRole, mutate = false): void {
+  if (!(mutate ? canManageBuyerProcurement(role) : canReadBuyerProcurement(role))) {
+    throw new WorkspaceError("permission");
+  }
+}
+
+function normalizeProcurementListName(name: string): string {
+  if (typeof name !== "string") throw new WorkspaceError("invalid");
+  const normalized = name.trim();
+  if (normalized.length < 1 || normalized.length > 120) {
+    throw new WorkspaceError("invalid");
+  }
+  return normalized;
+}
+
+function validateProcurementQuantity(quantity: number): void {
+  if (
+    !Number.isFinite(quantity) ||
+    !Number.isInteger(quantity) ||
+    quantity < 1 ||
+    quantity > 1_000_000
+  ) {
+    throw new WorkspaceError("invalid");
+  }
+}
+
+const PROCUREMENT_LIST_COLUMNS =
+  "id,organization_id,name,created_by,created_at,updated_at" as const;
+const PROCUREMENT_ITEM_COLUMNS =
+  "id,organization_id,list_id,catalog_offer_id,quantity,created_at,updated_at" as const;
+
+export async function loadBuyerProcurementLists(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+): Promise<BuyerProcurementListWithItems[]> {
+  assertProcurementListAccess(role);
+  const [listsResult, itemsResult] = await Promise.all([
+    client
+      .from("buyer_procurement_lists")
+      .select(PROCUREMENT_LIST_COLUMNS)
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: true }),
+    client
+      .from("buyer_procurement_list_items")
+      .select(PROCUREMENT_ITEM_COLUMNS)
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: true }),
+  ]);
+  const lists = unwrap(listsResult.data, listsResult.error);
+  const items = unwrap(itemsResult.data, itemsResult.error);
+  return lists.map((list) => ({
+    ...list,
+    items: items.filter((item) => item.list_id === list.id),
+  }));
+}
+
+export async function createBuyerProcurementList(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  nameInput: string,
+): Promise<BuyerProcurementList> {
+  assertProcurementListAccess(role, true);
+  const name = normalizeProcurementListName(nameInput);
+  const { data, error } = await client
+    .from("buyer_procurement_lists")
+    .insert({ organization_id: organizationId, name })
+    .select(PROCUREMENT_LIST_COLUMNS)
+    .single();
+  return unwrap(data, error);
+}
+
+export async function renameBuyerProcurementList(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  listId: string,
+  nameInput: string,
+): Promise<BuyerProcurementList> {
+  assertProcurementListAccess(role, true);
+  const name = normalizeProcurementListName(nameInput);
+  const { data, error } = await client
+    .from("buyer_procurement_lists")
+    .update({ name })
+    .eq("organization_id", organizationId)
+    .eq("id", listId)
+    .select(PROCUREMENT_LIST_COLUMNS)
+    .single();
+  return unwrap(data, error);
+}
+
+export async function deleteBuyerProcurementList(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  listId: string,
+): Promise<void> {
+  assertProcurementListAccess(role, true);
+  const { data, error } = await client
+    .from("buyer_procurement_lists")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("id", listId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw mapError(error);
+  if (!data) throw new WorkspaceError("not_found");
+}
+
+export async function addBuyerProcurementListItem(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  listId: string,
+  offerId: string,
+  quantity: number,
+): Promise<BuyerProcurementListItem> {
+  assertProcurementListAccess(role, true);
+  validateProcurementQuantity(quantity);
+  const { data, error } = await client
+    .from("buyer_procurement_list_items")
+    .insert({
+      organization_id: organizationId,
+      list_id: listId,
+      catalog_offer_id: offerId,
+      quantity,
+    })
+    .select(PROCUREMENT_ITEM_COLUMNS)
+    .single();
+  return unwrap(data, error);
+}
+
+export async function updateBuyerProcurementListItemQuantity(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  itemId: string,
+  quantity: number,
+): Promise<BuyerProcurementListItem> {
+  assertProcurementListAccess(role, true);
+  validateProcurementQuantity(quantity);
+  const { data, error } = await client
+    .from("buyer_procurement_list_items")
+    .update({ quantity })
+    .eq("organization_id", organizationId)
+    .eq("id", itemId)
+    .select(PROCUREMENT_ITEM_COLUMNS)
+    .single();
+  return unwrap(data, error);
+}
+
+export async function removeBuyerProcurementListItem(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  itemId: string,
+): Promise<void> {
+  assertProcurementListAccess(role, true);
+  const { data, error } = await client
+    .from("buyer_procurement_list_items")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("id", itemId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw mapError(error);
+  if (!data) throw new WorkspaceError("not_found");
 }
