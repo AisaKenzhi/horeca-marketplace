@@ -78,6 +78,7 @@ export type WorkspaceErrorCode =
   | "stale_preview"
   | "idempotency_conflict"
   | "already_submitted"
+  | "location_in_use"
   | "operation_failed";
 
 export function canManageSupplierCatalog(role: MembershipRole): boolean {
@@ -184,6 +185,8 @@ export function workspaceErrorMessage(error: unknown): string {
         return "Ключ повтора уже использован для другого содержимого. Обновите черновик и повторите действие.";
       case "already_submitted":
         return "Этот черновик уже использован для запроса и заморожен. Обновите список запросов.";
+      case "location_in_use":
+        return "Точка покупателя используется сохранённой корзиной или запросом. Сначала уберите её из черновиков или создайте другую точку.";
       case "unavailable":
         return "Не удалось связаться с рабочим контуром. Проверьте подключение и повторите попытку.";
       case "operation_failed":
@@ -505,6 +508,56 @@ export async function createBuyerLocation(
     .select("id,organization_id,name,address,delivery_zone,created_at")
     .single();
   return unwrap(data, error);
+}
+
+export async function updateBuyerLocation(
+  client: WorkspaceClient,
+  organizationId: string,
+  locationId: string,
+  input: BuyerLocationDraft,
+): Promise<BuyerLocationRow> {
+  if (validateBuyerLocation(input)) throw new WorkspaceError("invalid");
+  const { data, error } = await client
+    .from("buyer_locations")
+    .update({
+      name: input.name.trim(),
+      address: input.address.trim(),
+      delivery_zone: input.deliveryZone.trim() || null,
+    })
+    .eq("organization_id", organizationId)
+    .eq("id", locationId)
+    .select("id,organization_id,name,address,delivery_zone,created_at")
+    .single();
+  return unwrap(data, error);
+}
+
+/**
+ * Deleting a location is only safe when no saved cart or request references it:
+ * both foreign keys use ON DELETE RESTRICT. RLS and the tenant-scoped filters
+ * keep this inside the acting organisation; a concurrent attachment can still
+ * fail at the database boundary and is reported as a safe error.
+ */
+export async function deleteBuyerLocation(
+  client: WorkspaceClient,
+  organizationId: string,
+  locationId: string,
+): Promise<void> {
+  for (const table of ["buyer_draft_carts", "buyer_procurement_requests"] as const) {
+    const { data, error } = await client
+      .from(table)
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("buyer_location_id", locationId)
+      .limit(1);
+    if (error) throw mapError(error);
+    if (data && data.length > 0) throw new WorkspaceError("location_in_use");
+  }
+  const { error } = await client
+    .from("buyer_locations")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("id", locationId);
+  if (error) throw mapError(error);
 }
 
 export async function createSupplierProfile(

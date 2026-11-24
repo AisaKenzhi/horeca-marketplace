@@ -13,6 +13,7 @@ import {
 } from "@/data/supabase/workspace";
 import { useRef } from "react";
 import type {
+  BuyerLocationRow,
   CatalogAvailability,
   OrganizationType,
 } from "@/data/supabase/database.types";
@@ -20,10 +21,12 @@ import {
   canManageSupplierCatalog,
   createBuyerLocation,
   createCatalogOffer,
+  deleteBuyerLocation,
   createOrganization,
   createSupplierProfile,
   loadWorkspace,
   setCatalogOfferPublished,
+  updateBuyerLocation,
   updateCatalogOfferTerms,
   workspaceErrorMessage,
   type BuyerLocationDraft,
@@ -389,6 +392,7 @@ function AccountWorkspaceReady({
   const loadedUserId = useRef<string | null>(null);
   const [invitationBusy, setInvitationBusy] = useState(false);
   const [inviteNotice, setInviteNotice] = useState("");
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -629,21 +633,81 @@ function AccountWorkspaceReady({
                       {location.delivery_zone ? (
                         <span className="muted">Зона: {location.delivery_zone}</span>
                       ) : null}
+                      {canManageOrganization(activeOrganization.role) ? (
+                        <div className="action-row">
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            onClick={() => setEditingLocationId(location.id)}
+                          >
+                            Изменить точку
+                          </button>
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            disabled={actionBusy}
+                            onClick={() => {
+                              const confirmed = window.confirm(
+                                `Удалить точку «${location.name}»? Если она указана в сохранённой корзине или запросе, удаление будет отклонено.`,
+                              );
+                              if (!confirmed) return;
+                              void runAction(
+                                () =>
+                                  deleteBuyerLocation(
+                                    client,
+                                    activeOrganization.id,
+                                    location.id,
+                                  ),
+                                "Точка удалена из этой организации.",
+                              ).catch((error: unknown) => {
+                                setActionError(workspaceErrorMessage(error));
+                              });
+                            }}
+                          >
+                            Удалить точку
+                          </button>
+                        </div>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
               ) : (
                 <p className="empty">Точек доставки пока нет.</p>
               )}
-              <BuyerLocationForm
-                busy={actionBusy}
-                onCreate={(draft) =>
-                  runAction(
-                    () => createBuyerLocation(client, activeOrganization.id, draft),
-                    "Точка добавлена к этой организации.",
-                  )
-                }
-              />
+              {editingLocationId &&
+              activeLocations.some((location) => location.id === editingLocationId) ? (
+                <BuyerLocationForm
+                  key={editingLocationId}
+                  busy={actionBusy}
+                  initial={activeLocations.find(
+                    (location) => location.id === editingLocationId,
+                  )}
+                  onSave={(draft) =>
+                    runAction(
+                      () =>
+                        updateBuyerLocation(
+                          client,
+                          activeOrganization.id,
+                          editingLocationId,
+                          draft,
+                        ),
+                      "Точка обновлена.",
+                    ).then(() => setEditingLocationId(null))
+                  }
+                  onCancel={() => setEditingLocationId(null)}
+                />
+              ) : (
+                <BuyerLocationForm
+                  busy={actionBusy}
+                  initial={undefined}
+                  onSave={(draft) =>
+                    runAction(
+                      () => createBuyerLocation(client, activeOrganization.id, draft),
+                      "Точка добавлена к этой организации.",
+                    )
+                  }
+                />
+              )}
             </section>
           ) : null}
 
@@ -963,24 +1027,30 @@ function OrganizationForm({
 
 function BuyerLocationForm({
   busy,
-  onCreate,
+  initial,
+  onSave,
+  onCancel,
 }: {
   busy: boolean;
-  onCreate: (draft: BuyerLocationDraft) => Promise<void>;
+  initial: BuyerLocationRow | undefined;
+  onSave: (draft: BuyerLocationDraft) => Promise<void>;
+  onCancel?: () => void;
 }): ReactNode {
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
-  const [deliveryZone, setDeliveryZone] = useState("");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [address, setAddress] = useState(initial?.address ?? "");
+  const [deliveryZone, setDeliveryZone] = useState(initial?.delivery_zone ?? "");
   const [error, setError] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     try {
-      await onCreate({ name, address, deliveryZone });
-      setName("");
-      setAddress("");
-      setDeliveryZone("");
+      await onSave({ name, address, deliveryZone });
+      if (!initial) {
+        setName("");
+        setAddress("");
+        setDeliveryZone("");
+      }
     } catch (caught) {
       setError(workspaceErrorMessage(caught));
     }
@@ -991,7 +1061,9 @@ function BuyerLocationForm({
       className="account-form account-form-grid"
       onSubmit={(event) => void submit(event)}
     >
-      <h3 className="subsection-title">Добавить точку</h3>
+      <h3 className="subsection-title">
+        {initial ? `Изменить точку «${initial.name}»` : "Добавить точку"}
+      </h3>
       <label className="field" htmlFor="location-name">
         Название точки
         <input
@@ -1024,8 +1096,13 @@ function BuyerLocationForm({
       </label>
       {error ? <Notice tone="danger">{error}</Notice> : null}
       <button className="btn btn-primary" type="submit" disabled={busy}>
-        Добавить точку
+        {initial ? "Сохранить точку" : "Добавить точку"}
       </button>
+      {onCancel ? (
+        <button className="btn btn-ghost" type="button" onClick={onCancel}>
+          Отмена
+        </button>
+      ) : null}
     </form>
   );
 }
