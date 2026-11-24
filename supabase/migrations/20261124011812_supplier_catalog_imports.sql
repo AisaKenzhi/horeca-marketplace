@@ -116,6 +116,8 @@ begin
     raise exception using errcode = '42501', message = 'not authorized';
   end if;
 
+  -- The 512 KB UI cap applies to raw CSV; normalized JSON repeats field names and
+  -- row metadata and may escape cell text. Keep a strict 4 MB RPC-envelope cap.
   if pg_catalog.jsonb_typeof(p_rows) is distinct from 'array' then
     raise exception using errcode = '23514', message = 'invalid import payload';
   elsif pg_catalog.jsonb_array_length(p_rows) < 1
@@ -168,7 +170,7 @@ begin
 
     if pg_catalog.jsonb_typeof(v_row) <> 'object' then
       v_errors := pg_catalog.jsonb_build_array('malformed_row');
-    elsif pg_catalog.jsonb_object_length(v_row) <> 3
+    elsif (select pg_catalog.count(*) from pg_catalog.jsonb_object_keys(v_row)) <> 3
        or not (v_row ?& array['row_number', 'values', 'client_errors']) then
       v_errors := pg_catalog.jsonb_build_array('malformed_row');
     else
@@ -198,7 +200,7 @@ begin
       v_values := v_row -> 'values';
       if pg_catalog.jsonb_typeof(v_values) <> 'object' then
         v_errors := v_errors || pg_catalog.jsonb_build_array('malformed_values');
-      elsif pg_catalog.jsonb_object_length(v_values) <> 12
+      elsif (select pg_catalog.count(*) from pg_catalog.jsonb_object_keys(v_values)) <> 12
          or not (v_values ?& array[
            'sku', 'title', 'category', 'sell_unit_label', 'units_per_sell_unit',
            'pack_amount', 'pack_base_unit', 'price_amount', 'currency', 'moq',
@@ -450,6 +452,7 @@ declare
   v_created integer := 0;
   v_updated integer := 0;
   v_result jsonb;
+  v_lock_sku text;
 begin
   if v_uid is null or p_organization_id is null or p_import_id is null then
     raise exception using errcode = '42501', message = 'not authorized';
@@ -495,10 +498,25 @@ begin
     raise exception using errcode = '23514', message = 'import is blocked';
   end if;
 
+  -- Serialize concurrent previews for the same tenant/SKU, including absent rows.
+  -- Lock the complete set in bytewise order before row locks to avoid deadlocks.
+  for v_lock_sku in
+    select distinct preview_row.value ->> 'sku' as sku
+    from pg_catalog.jsonb_array_elements(v_job.preview -> 'rows') as preview_row(value)
+    where preview_row.value ->> 'action' in ('create', 'update', 'unchanged')
+    order by sku collate "C"
+  loop
+    perform pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtext(p_organization_id::text),
+      pg_catalog.hashtext(v_lock_sku)
+    );
+  end loop;
+
   -- Lock and validate every previewed offer before performing any write.
   for v_item in
     select preview_row.value
     from pg_catalog.jsonb_array_elements(v_job.preview -> 'rows') as preview_row(value)
+    order by (preview_row.value ->> 'sku') collate "C"
   loop
     if v_item ->> 'action' = 'error' then
       raise exception using errcode = '23514', message = 'import is blocked';

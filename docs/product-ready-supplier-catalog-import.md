@@ -10,7 +10,7 @@ The local parser is a convenience, not an authorization or validation boundary. 
 
 Every row must include supplier SKU, title, category, sell-unit label, units per sell unit, pack amount, pack base unit, positive price, explicit currency code, MOQ, and order step. Availability is optional and defaults to `unknown`. Pack base units are `kg`, `l`, or `piece`; values are not inferred or converted. Currency must be supplied as three uppercase letters, with no market-specific currency default or conversion.
 
-Files are limited to 512,000 UTF-8 bytes, 2,000 data rows, 32 columns, and 4,096 characters per cell. Quoting follows CSV double-quote escaping, including quoted commas and newlines. Malformed input, inconsistent row widths, duplicate mappings, duplicate SKUs within one file, and invalid numeric values block the batch. Values are rendered as text; the import does not execute formulas or macros.
+Files are limited to 512,000 UTF-8 bytes, 2,000 data rows, 32 columns, and 4,096 characters per cell. The server independently caps the serialized JSON RPC payload at 4,000,000 bytes. This higher but strict server ceiling allows for normalized JSON rows repeating field names, row metadata, and JSON escaping while the client still enforces the smaller raw-CSV limit; it is not permission to upload larger files. The row ceiling also bounds per-row validation and preview work. Quoting follows CSV double-quote escaping, including quoted commas and newlines. Malformed input, inconsistent row widths, duplicate mappings, duplicate SKUs within one file, and invalid numeric values block the batch. Values are rendered as text; the import does not execute formulas or macros.
 
 ## Roles, approval, and tenant isolation
 
@@ -51,4 +51,4 @@ The preview response includes `import_id`, job `status`, a summary (`added`, `up
 
 ## Verification
 
-Run `npm run verify`, `npm run format`, and `npm run e2e` for local lint, types, unit/component tests, build, formatting, and browser tests. Database migration and pgTAP coverage run in the repository's GitHub Actions job against an ephemeral local Supabase/Postgres database; these checks do not use a live database. Local synthetic tests demonstrate implementation behavior only, not production readiness or external service behavior.
+Run `npm run verify`, `npm run format`, and `npm run e2e` for local lint, types, unit/component tests, build, formatting, and browser tests. GitHub Actions starts an ephemeral local Supabase stack, runs pgTAP, then checks grants and tenant RLS through local PostgREST and races two separately previewed imports for the same SKU. The smoke test uses only generated local fixture IDs and local signing keys and refuses non-loopback API or database URLs; it does not use a live database. Local synthetic tests demonstrate implementation behavior only, not production readiness or external service behavior.

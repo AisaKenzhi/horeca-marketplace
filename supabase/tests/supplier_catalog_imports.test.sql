@@ -1,5 +1,5 @@
 begin;
-select plan(32);
+select plan(38);
 insert into auth.users(id,instance_id,aud,role,email,encrypted_password,email_confirmed_at) values
 ('81000000-0000-4000-8000-000000000001','00000000-0000-0000-0000-000000000000','authenticated','authenticated','imp-owner@example.test','',now()),
 ('81000000-0000-4000-8000-000000000002','00000000-0000-0000-0000-000000000000','authenticated','authenticated','imp-editor@example.test','',now()),
@@ -54,6 +54,16 @@ select throws_ok(format('select public.apply_supplier_catalog_import(%L,%L)', '8
 select is((select count(*)::integer from public.catalog_offers where supplier_organization_id='82000000-0000-4000-8000-000000000001' and supplier_sku='DUP'),0,'blocked batch creates no offers');
 select is((public.preview_supplier_catalog_import('82000000-0000-4000-8000-000000000001','83000000-0000-4000-8000-000000000014','[{"row_number":1,"values":{"sku":"BAD","title":"","category":"C","sell_unit_label":"box","units_per_sell_unit":"many","pack_amount":"not-a-number","pack_base_unit":"bad","price_amount":"NaN","currency":"usd","moq":"1","order_step":"1","availability":"bad"},"client_errors":[]}]'::jsonb)->>'status','blocked','malformed numeric text safely blocks without casting errors');
 select ok((public.preview_supplier_catalog_import('82000000-0000-4000-8000-000000000001','83000000-0000-4000-8000-000000000016','[{"row_number":1,"values":{"sku":"NO-PRICE","title":"Good","category":"C","sell_unit_label":"box","units_per_sell_unit":"1","pack_amount":"1","pack_base_unit":"kg","price_amount":null,"currency":null,"moq":"1","order_step":"1","availability":"unknown"},"client_errors":[]}]'::jsonb)->'rows'->0->'errors' @> '["invalid_price","invalid_currency"]'::jsonb,'server requires explicit positive price and currency');
+select throws_ok(
+  $$select public.preview_supplier_catalog_import(
+    '82000000-0000-4000-8000-000000000001',
+    '83000000-0000-4000-8000-000000000018',
+    pg_catalog.jsonb_build_array(
+      pg_catalog.jsonb_build_object('oversized', pg_catalog.repeat('x', 4000001))
+    )
+  )$$,
+  '23514', 'invalid import payload', 'server rejects a serialized RPC payload above 4 MB'
+);
 select is(public.preview_supplier_catalog_import('82000000-0000-4000-8000-000000000001','83000000-0000-4000-8000-000000000017','[null]'::jsonb)->'rows'->0->>'row_number','1','malformed row gets a safe display row number');
 select is((public.preview_supplier_catalog_import('82000000-0000-4000-8000-000000000001','83000000-0000-4000-8000-000000000015','[{"row_number":1,"values":{"sku":"CLIENTERR","title":"Good","category":"C","sell_unit_label":"box","units_per_sell_unit":"1","pack_amount":"1","pack_base_unit":"kg","price_amount":"10","currency":"KZT","moq":"1","order_step":"1","availability":"unknown"},"client_errors":["bad header"]}]'::jsonb)->>'status','blocked','client parser errors block batch');
 select is(public.preview_supplier_catalog_import('82000000-0000-4000-8000-000000000001','83000000-0000-4000-8000-000000000010','[{"row_number":1,"values":{"sku":"PENDING-A","title":"Shared name","category":"Produce","sell_unit_label":"box","units_per_sell_unit":"1","pack_amount":"2","pack_base_unit":"kg","price_amount":"10","currency":"KZT","moq":"1","order_step":"1","availability":"unknown"},"client_errors":[]},{"row_number":2,"values":{"sku":"PENDING-B","title":"Shared name","category":"Produce","sell_unit_label":"box","units_per_sell_unit":"1","pack_amount":"2","pack_base_unit":"kg","price_amount":"10","currency":"KZT","moq":"1","order_step":"1","availability":"unknown"},"client_errors":[]}]'::jsonb)->>'status','applied','same key and fingerprint replay is idempotent');
@@ -77,5 +87,63 @@ insert into stale_job select (public.preview_supplier_catalog_import('82000000-0
 update public.catalog_offers set title='Concurrent edit' where supplier_organization_id='82000000-0000-4000-8000-000000000001' and supplier_sku='PENDING-A';
 select throws_ok(format('select public.apply_supplier_catalog_import(%L,%L)', '82000000-0000-4000-8000-000000000001',(select id from stale_job)),'40001',null,'stale preview is rejected');
 select is((select count(*)::integer from public.catalog_offers where supplier_organization_id='82000000-0000-4000-8000-000000000001' and supplier_sku='ROLLBACK-NEW'),0,'stale batch performs no partial inserts');
+reset role;
+create function private.test_fail_late_catalog_offer_insert()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if new.supplier_sku = 'ROLLBACK-LATE' then
+    raise exception using errcode = '23514', message = 'forced late insert failure';
+  end if;
+  return new;
+end;
+$$;
+create trigger supplier_catalog_import_test_late_failure
+before insert on public.catalog_offers
+for each row execute function private.test_fail_late_catalog_offer_insert();
+set local role authenticated;
+select set_config('request.jwt.claim.sub','81000000-0000-4000-8000-000000000002',true);
+create temporary table late_failure_job(id uuid);
+insert into late_failure_job
+select (public.preview_supplier_catalog_import(
+  '82000000-0000-4000-8000-000000000001',
+  '83000000-0000-4000-8000-000000000030',
+  pg_catalog.jsonb_build_array(
+    pg_catalog.jsonb_build_object(
+      'row_number', 1,
+      'values', pg_catalog.jsonb_build_object(
+        'sku','ROLLBACK-FIRST','title','Late rollback first','category','Produce',
+        'sell_unit_label','box','units_per_sell_unit','1','pack_amount','2',
+        'pack_base_unit','kg','price_amount','10','currency','KZT','moq','1',
+        'order_step','1','availability','unknown'
+      ),
+      'client_errors', pg_catalog.jsonb_build_array()
+    ),
+    pg_catalog.jsonb_build_object(
+      'row_number', 2,
+      'values', pg_catalog.jsonb_build_object(
+        'sku','ROLLBACK-LATE','title','Late rollback second','category','Produce',
+        'sell_unit_label','box','units_per_sell_unit','1','pack_amount','2',
+        'pack_base_unit','kg','price_amount','10','currency','KZT','moq','1',
+        'order_step','1','availability','unknown'
+      ),
+      'client_errors', pg_catalog.jsonb_build_array()
+    )
+  )
+)->>'import_id')::uuid;
+select throws_ok(
+  format('select public.apply_supplier_catalog_import(%L,%L)',
+    '82000000-0000-4000-8000-000000000001', (select id from late_failure_job)),
+  '23514', 'forced late insert failure', 'late SQL exception aborts the complete apply call'
+);
+reset role;
+select is((select count(*)::integer from public.catalog_offers where supplier_organization_id='82000000-0000-4000-8000-000000000001' and supplier_sku in ('ROLLBACK-FIRST','ROLLBACK-LATE')),0,'late failure rolls back offers inserted earlier in the batch');
+select is((select count(*)::integer from public.catalog_products where name in ('Late rollback first','Late rollback second')),0,'late failure rolls back all Product inserts');
+select is((select status from public.supplier_catalog_imports where id=(select id from late_failure_job)),'previewed','failed job remains unapplied after late SQL error');
+select ok((select result is null and applied_at is null from public.supplier_catalog_imports where id=(select id from late_failure_job)),'failed job has no applied result or timestamp');
+drop trigger supplier_catalog_import_test_late_failure on public.catalog_offers;
+drop function private.test_fail_late_catalog_offer_insert();
 select * from finish();
 rollback;

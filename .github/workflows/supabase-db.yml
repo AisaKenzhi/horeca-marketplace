@@ -10,16 +10,39 @@ permissions:
 
 jobs:
   test-db:
-    name: Ephemeral local database (pgTAP)
+    name: Ephemeral local Supabase (pgTAP + PostgREST)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v3
         with:
           version: 3.3.0
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19"
       - name: Validate Supabase configuration
         run: supabase config validate
-      - name: Start local Postgres database
-        run: supabase db start
+      - name: Start local Supabase stack
+        run: |
+          if ! supabase start > "$RUNNER_TEMP/supabase-start.log" 2>&1; then
+            echo "Local Supabase start failed; omitting generated key/secret lines from diagnostics."
+            grep -Eiv '(key|secret|token)' "$RUNNER_TEMP/supabase-start.log" | tail -n 40 || true
+            exit 1
+          fi
+          echo "Local Supabase stack started."
       - name: Run database tests
         run: supabase test db
+      - name: Verify grants, RLS, and concurrent imports through local PostgREST
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source <(supabase status -o env)
+          set +a
+          unset SERVICE_ROLE_KEY SERVICE_ROLE_SECRET
+          node scripts/supabase-import-postgrest-smoke.mjs
+      - name: Stop local Supabase stack
+        if: always()
+        run: supabase stop --no-backup || true
