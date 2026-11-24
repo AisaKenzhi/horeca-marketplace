@@ -132,7 +132,8 @@ First E2E run may need a browser: `npm run e2e:install` (Chromium).
   verification are not implemented.
 - No XLSX/ERP/1C import (CSV only, local and validated).
 
-See `docs/product-scope.md`, `docs/adr.md`, `docs/security.md` and
+See [`docs/product-roadmap.md`](docs/product-roadmap.md) for the consolidated
+plan through Product Ready and launch gates. Also see `docs/product-scope.md`, `docs/adr.md`, `docs/security.md` and
 [`docs/tenant-foundation.md`](docs/tenant-foundation.md) for the account, RLS and
 local database setup details.
 Deployability and the honest launch-gate status are in
