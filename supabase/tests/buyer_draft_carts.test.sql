@@ -15,8 +15,11 @@ on conflict (id) do nothing;
 select set_config('request.jwt.claim.sub','12000000-0000-4000-8000-000000000001',true);
 insert into public.organizations(id,name,organization_type,created_by) values
  ('22000000-0000-4000-8000-000000000001','Buyer tenant','buyer',auth.uid()),
- ('22000000-0000-4000-8000-000000000002','Other buyer','buyer','12000000-0000-4000-8000-000000000007'),
  ('22000000-0000-4000-8000-000000000006','Supplier tenant','supplier',auth.uid());
+select set_config('request.jwt.claim.sub','12000000-0000-4000-8000-000000000007',true);
+insert into public.organizations(id,name,organization_type,created_by)
+values ('22000000-0000-4000-8000-000000000002','Other buyer','buyer',auth.uid());
+select set_config('request.jwt.claim.sub','12000000-0000-4000-8000-000000000001',true);
 insert into public.organization_memberships(organization_id,user_id,role) values
  ('22000000-0000-4000-8000-000000000001','12000000-0000-4000-8000-000000000002','buyer'),
  ('22000000-0000-4000-8000-000000000001','12000000-0000-4000-8000-000000000003','admin'),
