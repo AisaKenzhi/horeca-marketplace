@@ -13,6 +13,7 @@
  */
 
 import type { FulfillmentStatus, PaymentStatus, SuborderStatus } from "./entities";
+import { conflictError } from "./errors";
 
 /* ------------------------- Agreement lifecycle ------------------------- */
 
@@ -43,7 +44,7 @@ export function canTransitionSuborder(from: SuborderStatus, to: SuborderStatus):
 
 export function assertSuborderTransition(from: SuborderStatus, to: SuborderStatus): void {
   if (!canTransitionSuborder(from, to)) {
-    throw new Error(`Illegal suborder transition: ${from} -> ${to}`);
+    throw conflictError(`Illegal suborder transition: ${from} -> ${to}`);
   }
 }
 
@@ -79,7 +80,7 @@ export function assertFulfillmentTransition(
   to: FulfillmentStatus,
 ): void {
   if (!canTransitionFulfillment(from, to)) {
-    throw new Error(`Illegal fulfillment transition: ${from} -> ${to}`);
+    throw conflictError(`Illegal fulfillment transition: ${from} -> ${to}`);
   }
 }
 

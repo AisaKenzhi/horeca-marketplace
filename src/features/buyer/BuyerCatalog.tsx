@@ -11,6 +11,7 @@ import { availabilityLabel, describePackaging, relativeAge } from "@/components/
 import { evaluateFreshness } from "@/domain/freshness";
 import { unitPrice } from "@/domain/packaging";
 import { formatMoney } from "@/domain/money";
+import { toSafeError } from "@/domain/errors";
 import type { SupplierOffer } from "@/domain/entities";
 
 interface CatalogRowProps {
@@ -40,7 +41,7 @@ function CatalogRow({ offer, supplierName, nowIso, onAdd }: CatalogRowProps): Re
       onAdd(offer.id, quantity);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : messages.common.error);
+      setError(toSafeError(e).message);
     }
   }
 
@@ -116,8 +117,8 @@ function CatalogRow({ offer, supplierName, nowIso, onAdd }: CatalogRowProps): Re
           <span>{messages.common.quantity}</span>
           <input
             type="number"
-            min={1}
-            step={1}
+            min={offer.packaging.moq}
+            step={offer.packaging.orderStep}
             value={quantity}
             onChange={(e) => setQuantity(Number(e.target.value))}
             inputMode="numeric"

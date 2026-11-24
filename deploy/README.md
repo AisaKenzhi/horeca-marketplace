@@ -58,11 +58,13 @@ Then publish `dist/` (e.g. to a `gh-pages` branch). Add a `404.html` copy of
 ```
 
 It does **not** touch any other site, domain, certificate, DNS record or cloud
-firewall rule on the host. Undo:
+firewall rule on the host. Its web root is `/var/www/horeca-demo-local`, separate
+from the domain demo's `/var/www/horeca-demo`, so re-running it cannot wipe a
+live site. Undo:
 
 ```bash
-sudo rm /etc/nginx/sites-enabled/horeca-demo && sudo systemctl reload nginx
-sudo rm -rf /var/www/horeca-demo
+sudo rm /etc/nginx/sites-enabled/horeca-demo-local && sudo systemctl reload nginx
+sudo rm -rf /var/www/horeca-demo-local
 ```
 
 **Exposing it to the internet** is a separate, deliberate step that needs one of

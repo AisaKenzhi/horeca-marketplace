@@ -16,6 +16,7 @@ import type {
   BuyerListId,
   BuyerLocationId,
   DecisionId,
+  FulfillmentEventId,
   ImportJobId,
   IssueId,
   IsoTimestamp,
@@ -317,7 +318,7 @@ export type FulfillmentEventType =
   | "receiving_completed";
 
 export interface FulfillmentEvent {
-  readonly id: string;
+  readonly id: FulfillmentEventId;
   readonly suborderId: SuborderId;
   readonly type: FulfillmentEventType;
   readonly fromStatus: FulfillmentStatus | null;
@@ -342,6 +343,17 @@ export type DiscrepancyReason =
   | "temperature"
   | "delay";
 
+/** Runtime allow-list for receipt input boundaries. */
+export const DISCREPANCY_REASONS = [
+  "shortage",
+  "wrong_item",
+  "unapproved_substitution",
+  "damaged",
+  "expired",
+  "temperature",
+  "delay",
+] as const satisfies readonly DiscrepancyReason[];
+
 /**
  * A receipt record documents what was OBSERVED. It does not decide a dispute,
  * compensation, refund, or arbitration.
@@ -353,6 +365,8 @@ export interface ReceiptRecord {
   readonly recordedAt: IsoTimestamp;
   readonly lines: readonly ReceiptLine[];
   readonly notedDiscrepancies: readonly DiscrepancyReason[];
+  /** Optional key so a retried receipt write cannot create a second record. */
+  readonly idempotencyKey?: string;
 }
 
 export interface Issue {

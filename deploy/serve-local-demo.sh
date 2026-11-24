@@ -3,21 +3,23 @@
 # Publish the HoReCa marketplace STATIC DEMO on this host, reversibly.
 #
 # What this does (and does NOT do):
-#   - builds `dist/` and copies it to /var/www/horeca-demo
+#   - builds `dist/` and copies it to /var/www/horeca-demo-local
 #   - serves it with nginx on a DEDICATED port (default 8080)
 #   - it does NOT touch any existing site, domain, certificate, DNS record,
-#     cloud firewall rule, or paid resource
+#     cloud firewall rule, or paid resource. Its web root is deliberately
+#     separate from the domain demo (/var/www/horeca-demo), so re-running this
+#     local script cannot wipe a live site.
 #   - the app is a client-only SPA with in-memory state: no backend, no DB,
 #     no real orders, no data collection
 #
 # Usage:  ./deploy/serve-local-demo.sh [PORT]
-# Undo:   sudo rm /etc/nginx/sites-enabled/horeca-demo && sudo systemctl reload nginx
-#         sudo rm -rf /var/www/horeca-demo
+# Undo:   sudo rm /etc/nginx/sites-enabled/horeca-demo-local && sudo systemctl reload nginx
+#         sudo rm -rf /var/www/horeca-demo-local
 set -euo pipefail
 
 PORT="${1:-8080}"
-ROOT="/var/www/horeca-demo"
-SITE="/etc/nginx/sites-available/horeca-demo"
+ROOT="/var/www/horeca-demo-local"
+SITE="/etc/nginx/sites-available/horeca-demo-local"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "==> Building the static demo"
@@ -60,7 +62,7 @@ server {
     }
 }
 NGINX
-sudo ln -sf "$SITE" /etc/nginx/sites-enabled/horeca-demo
+sudo ln -sf "$SITE" /etc/nginx/sites-enabled/horeca-demo-local
 
 echo "==> Validating and reloading nginx"
 sudo nginx -t

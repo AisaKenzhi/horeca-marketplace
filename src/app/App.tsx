@@ -12,7 +12,7 @@ import { OperatorCockpit } from "@/features/operator/OperatorCockpit";
 import { AuditPage } from "@/features/operator/AuditPage";
 import { NotificationsPage } from "@/features/buyer/NotificationsPage";
 import { PersonaSwitcher } from "@/features/session/PersonaSwitcher";
-import { isBuyerSide, isPlatformSide, isSupplierSide } from "@/domain/authorization";
+import { isPlatformSide, isSupplierSide } from "@/domain/authorization";
 
 function BuyerNav({ m }: { m: ReturnType<typeof useApp>["messages"] }): ReactNode {
   return (
@@ -63,7 +63,6 @@ function Home(): ReactNode {
     <section className="card">
       <h2 className="card-title">{messages.app.title}</h2>
       <p>{messages.app.subtitle}</p>
-      <Notice tone="demo">{messages.app.demoBanner}</Notice>
       <p>
         Текущая демо-роль: <strong>{membership.displayName}</strong>. Это переключение
         демонстрационной персоны, а не реальная авторизация.
@@ -73,8 +72,7 @@ function Home(): ReactNode {
 }
 
 export function App(): ReactNode {
-  const { messages } = useApp();
-  const { membership } = useApp();
+  const { messages, membership } = useApp();
   const [navOpen, setNavOpen] = useState(false);
 
   const nav = useMemo(() => {
@@ -144,7 +142,6 @@ export function App(): ReactNode {
           HoReCa Marketplace — приватный P0-прототип. Синтетические данные. Не для
           продакшена.
         </p>
-        {isBuyerSide(membership) ? null : null}
       </footer>
     </div>
   );

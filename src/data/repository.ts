@@ -32,6 +32,7 @@ import type {
   SupplierProfile,
   SupplierSuborder,
 } from "@/domain/entities";
+import { DISCREPANCY_REASONS } from "@/domain/entities";
 import {
   asAuditEventId,
   asBasketId,
@@ -243,9 +244,34 @@ export class Repository {
     this.emit();
   }
 
+  /**
+   * Seed data uses small numeric ids (`bl-1`, `bl-2`, ...). A fresh counter
+   * alone would collide with them, so generated ids skip anything already
+   * present in state. Only the id counter is local to the instance; id shapes
+   * stay identical to the seeded ones.
+   */
+  private idExists(id: string): boolean {
+    const seen = new WeakSet<object>();
+    const contains = (value: unknown): boolean => {
+      if (Array.isArray(value)) return value.some(contains);
+      if (value === null || typeof value !== "object") return false;
+      if (seen.has(value)) return false;
+      seen.add(value);
+      if ("id" in value && value.id === id) return true;
+      return Object.values(value).some(contains);
+    };
+    // Ids live both on top-level entities and on nested arrays (basket lines,
+    // revision lines), so the check must walk the whole state graph.
+    return contains(this.state);
+  }
+
   private nextId(prefix: string): string {
-    this.idCounter += 1;
-    return `${prefix}-${this.idCounter}`;
+    let candidate: string;
+    do {
+      this.idCounter += 1;
+      candidate = `${prefix}-${this.idCounter}`;
+    } while (this.idExists(candidate));
+    return candidate;
   }
 
   private audit(
@@ -912,6 +938,18 @@ export class Repository {
 
   /* ------------------- Supplier: respond to suborders ------------------ */
 
+  /** Offer ids that a supplier may legitimately mention in a revision. */
+  private suborderOfferIds(suborder: SupplierSuborder): Set<string> {
+    const ids = new Set<string>();
+    for (const line of suborder.confirmedLines ?? []) ids.add(line.offerId);
+    const current = this.state.revisions.find((r) => r.id === suborder.currentRevisionId);
+    for (const line of current?.lines ?? []) {
+      ids.add(line.offerId);
+      if (line.substitutedToOfferId) ids.add(line.substitutedToOfferId);
+    }
+    return ids;
+  }
+
   proposeChange(
     ctx: SessionContext,
     suborderId: SuborderId,
@@ -928,6 +966,24 @@ export class Repository {
       throw conflictError(
         "Подзаказ изменился с момента открытия. Перечитайте текущую версию.",
       );
+    }
+    const allowed = this.suborderOfferIds(suborder);
+    for (const line of lines) {
+      const mentioned = [line.offerId, line.substitutedToOfferId].filter(
+        (id): id is string => id !== null,
+      );
+      if (!mentioned.some((id) => allowed.has(id))) {
+        throw validationError("Позиция не относится к этому подзаказу.");
+      }
+      if (
+        line.substitutedToOfferId &&
+        !this.state.offers.some(
+          (o) =>
+            o.id === line.substitutedToOfferId && o.supplierId === suborder.supplierId,
+        )
+      ) {
+        throw validationError("Предложение замены недоступно у этого поставщика.");
+      }
     }
     const nextNumber =
       this.state.revisions.filter((r) => r.suborderId === suborderId).length + 1;
@@ -971,6 +1027,9 @@ export class Repository {
     const revision = this.state.revisions.find(
       (r) => r.id === suborder.currentRevisionId,
     );
+    if (!revision && !suborder.confirmedLines) {
+      throw notFoundError("Ревизия подзаказа не найдена.");
+    }
     const next = cloneState(this.state);
     const now = asIso(ctx.nowIso);
     next.suborders = next.suborders.map((s) =>
@@ -1116,6 +1175,17 @@ export class Repository {
     if (!canRecordReceiving(ctx.membership, suborder.orgId)) {
       throw forbiddenError("Нет прав фиксировать приёмку.");
     }
+    // A retried write returns the original receipt instead of creating a
+    // second observation (and a second issue for the same discrepancy).
+    if (ctx.idempotencyKey !== undefined) {
+      const prior = this.state.receipts.find(
+        (r) =>
+          r.idempotencyKey === ctx.idempotencyKey &&
+          r.suborderId === suborderId &&
+          r.recordedBy === ctx.membership.userId,
+      );
+      if (prior) return;
+    }
     if (expectedVersion !== undefined && expectedVersion !== suborder.version) {
       throw conflictError(
         "Подзаказ изменился с момента открытия. Перечитайте текущую версию.",
@@ -1125,9 +1195,32 @@ export class Repository {
     if (suborder.fulfillmentStatus !== "receiving") {
       throw conflictError("Приёмку можно записать только на этапе приёмки.");
     }
+    if (lines.length === 0) {
+      throw validationError("Приёмка должна содержать хотя бы одну позицию.");
+    }
+    const confirmedOfferIds = new Set(
+      (suborder.confirmedLines ?? []).map((l) => l.offerId as string),
+    );
+    const seen = new Set<string>();
     for (const line of lines) {
-      if (!Number.isInteger(line.receivedQuantity) || line.receivedQuantity < 0) {
+      if (!Number.isSafeInteger(line.receivedQuantity) || line.receivedQuantity < 0) {
         throw validationError("Полученное количество должно быть целым неотрицательным.");
+      }
+      if (!Number.isSafeInteger(line.expectedQuantity) || line.expectedQuantity < 0) {
+        throw validationError("Ожидаемое количество должно быть целым неотрицательным.");
+      }
+      const offerId = line.offerId as string;
+      if (!confirmedOfferIds.has(offerId)) {
+        throw validationError("Позиция приёмки не относится к этому подзаказу.");
+      }
+      if (seen.has(offerId)) {
+        throw validationError("Позиция приёмки указана дважды.");
+      }
+      seen.add(offerId);
+    }
+    for (const reason of discrepancies) {
+      if (!(DISCREPANCY_REASONS as readonly string[]).includes(reason)) {
+        throw validationError("Неизвестная причина расхождения.");
       }
     }
     const next = cloneState(this.state);
@@ -1146,6 +1239,9 @@ export class Repository {
         recordedAt: now,
         lines,
         notedDiscrepancies: discrepancies,
+        ...(ctx.idempotencyKey !== undefined
+          ? { idempotencyKey: ctx.idempotencyKey }
+          : {}),
       },
     ];
     for (const reason of discrepancies) {
@@ -1178,11 +1274,12 @@ export class Repository {
     }
     const offer = this.state.offers.find((o) => o.id === offerId);
     if (!offer) throw notFoundError("Предложение не найдено.");
+    const knownOfferId = asOfferId(offerId);
+    // Adding the same offer twice is a no-op, not a second audit event.
+    if (list.offerIds.includes(knownOfferId)) return;
     const next = cloneState(this.state);
     next.buyerLists = next.buyerLists.map((l) =>
-      l.id === listId && !l.offerIds.includes(offerId as never)
-        ? { ...l, offerIds: [...l.offerIds, offerId as never] }
-        : l,
+      l.id === listId ? { ...l, offerIds: [...l.offerIds, knownOfferId] } : l,
     );
     this.audit(next, ctx, "list.add", "BuyerList", listId, { offerId });
     this.commit(next);
@@ -1449,12 +1546,16 @@ export class Repository {
   /* --------------------------- Notifications --------------------------- */
 
   markNotificationRead(ctx: SessionContext, notificationId: string): void {
+    const owned = this.state.notifications.find(
+      (n) => n.id === notificationId && n.audienceUserId === ctx.membership.userId,
+    );
+    // Foreign or already-read ids are a no-op: no write, no second audit event.
+    if (!owned || owned.read) return;
     const next = cloneState(this.state);
     next.notifications = next.notifications.map((n) =>
-      n.id === notificationId && n.audienceUserId === ctx.membership.userId
-        ? { ...n, read: true }
-        : n,
+      n.id === notificationId ? { ...n, read: true } : n,
     );
+    this.audit(next, ctx, "notification.read", "NotificationEvent", notificationId);
     this.commit(next);
   }
 

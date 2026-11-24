@@ -248,7 +248,7 @@ export function BuyerProcurementDetail(): ReactNode {
   return (
     <div className="stack">
       <Section
-        heading={`${supplier?.displayName ?? "—"} · ${activeSub.id}`}
+        heading={`${supplier?.displayName ?? "—"} · подзаказ`}
         headingId="suborder-heading"
       >
         <Notice tone="warn">
@@ -297,7 +297,9 @@ export function BuyerProcurementDetail(): ReactNode {
               <tbody>
                 {currentRevision.lines.map((l) => (
                   <tr key={l.id}>
-                    <td data-label="Позиция">{l.offerId}</td>
+                    <td data-label="Позиция">
+                      {state.offers.find((o) => o.id === l.offerId)?.title ?? "Позиция"}
+                    </td>
                     <td data-label="Изменение">{describeRevisionLine(l)}</td>
                     <td data-label="Причина">{l.reasonDemo}</td>
                   </tr>
@@ -365,7 +367,7 @@ export function BuyerProcurementDetail(): ReactNode {
             {decisions.map((d) => (
               <li key={d.id}>
                 {messages.procurement.decisionRecorded}:{" "}
-                {d.outcome === "accepted" ? "принято" : "отклонено"} ({d.revisionId}) ·{" "}
+                {d.outcome === "accepted" ? "принято" : "отклонено"} (ревизия) ·{" "}
                 {new Date(d.decidedAt).toLocaleString("ru-KZ")}
                 {d.noteDemo ? ` · ${d.noteDemo}` : ""}
               </li>

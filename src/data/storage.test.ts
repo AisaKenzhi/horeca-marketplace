@@ -100,4 +100,26 @@ describe("BrowserStore", () => {
     store.set("a", "1");
     expect(store.get("a")).toBe("1");
   });
+
+  it("keeps earlier in-memory values when a later write fails", () => {
+    const store = new BrowserStore(KEY);
+    store.set("a", "1");
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("QuotaExceededError");
+    });
+    store.set("b", "2");
+    expect(store.get("a")).toBe("1");
+    expect(store.get("b")).toBe("2");
+  });
+
+  it("uses the in-memory mirror for reads when localStorage is unavailable", () => {
+    vi.stubGlobal("localStorage", undefined);
+    try {
+      const store = new BrowserStore(KEY);
+      store.set("a", "1");
+      expect(store.get("a")).toBe("1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

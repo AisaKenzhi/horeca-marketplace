@@ -14,6 +14,7 @@ import {
 import {
   asSuborderId,
   asBuyerLocationId,
+  asOfferId,
   asSupplierId,
   type SuborderId,
 } from "@/domain/ids";
@@ -1232,5 +1233,114 @@ describe("repository: real CSV catalog import", () => {
         [],
       ),
     ).toThrow(/прав/i);
+  });
+});
+
+describe("repository: input boundaries", () => {
+  it("generates basket line ids that do not collide with seeded lines", () => {
+    const repo = makeRepo();
+    const beforeIds = cafeBasket(repo).lines.map((l) => l.id as string);
+    repo.addToBasket(buyer, "off-alpha-sugar", 1);
+    const lines = repo.getState().baskets.find((b) => b.orgId === "org-demo-cafe")!.lines;
+    const ids = lines.map((l) => l.id as string);
+    expect(new Set(ids).size).toBe(ids.length);
+    const added = lines.find((l) => !beforeIds.includes(l.id as string))!;
+    expect(beforeIds).not.toContain(added.id);
+    repo.setBasketLineQuantity(buyer, added.id, 3);
+    const after = repo.getState().baskets.find((b) => b.orgId === "org-demo-cafe")!.lines;
+    expect(after.find((l) => l.id === added.id)!.quantity).toBe(3);
+    expect(after.find((l) => l.id === beforeIds[0])!.quantity).toBe(6);
+  });
+
+  it("refuses a revision that mentions an offer outside the suborder", () => {
+    const repo = makeRepo();
+    submitReadyBasket(repo);
+    const suborder = repo.getState().suborders.find((s) => s.supplierId === "sup-alpha")!;
+    expect(() =>
+      repo.proposeChange(
+        supplierAlpha,
+        suborder.id,
+        [
+          {
+            offerId: asOfferId("off-gamma-rice"),
+            changeKind: "price_changed",
+            quantityBefore: 1,
+            quantityAfter: 1,
+            priceBefore: money(1000),
+            priceAfter: money(1100),
+            sellUnitLabelBefore: "мешок",
+            sellUnitLabelAfter: "мешок",
+            substitutedFromOfferId: null,
+            substitutedToOfferId: null,
+            reasonDemo: "демо",
+          },
+        ],
+        null,
+      ),
+    ).toThrow(/не относится/);
+  });
+
+  it("records one receipt per idempotency key and validates receipt lines", () => {
+    const repo = makeRepo();
+    submitReadyBasket(repo);
+    const suborder = repo.getState().suborders.find((s) => s.supplierId === "sup-alpha")!;
+    repo.confirmSuborderNoChange(supplierAlpha, suborder.id);
+    for (const to of ["packing", "ready_for_handover", "shipped", "delivered"] as const) {
+      repo.advanceFulfillment(supplierAlpha, suborder.id, to);
+    }
+    repo.advanceFulfillment(buyer, suborder.id, "receiving");
+    const receiver: SessionContext = {
+      membership: memberships.find((m) => m.id === "mem-buyer-receiver")!,
+      nowIso: "2026-11-19T13:00:00.000Z",
+      idempotencyKey: "receipt-once",
+    };
+    const lines = [
+      {
+        offerId: asOfferId("off-alpha-flour"),
+        expectedQuantity: 6,
+        receivedQuantity: 6,
+      },
+    ];
+    repo.recordReceipt(receiver, suborder.id, lines, ["shortage"]);
+    repo.recordReceipt(receiver, suborder.id, lines, ["shortage"]);
+    expect(repo.getState().receipts).toHaveLength(1);
+    expect(repo.getState().issues).toHaveLength(1);
+    expect(() =>
+      repo.recordReceipt(
+        { ...receiver, idempotencyKey: "receipt-foreign" },
+        suborder.id,
+        [{ ...lines[0]!, offerId: asOfferId("off-beta-oil") }],
+        [],
+      ),
+    ).toThrow(/не относится/);
+    expect(() =>
+      repo.recordReceipt(
+        { ...receiver, idempotencyKey: "receipt-none" },
+        suborder.id,
+        [],
+        [],
+      ),
+    ).toThrow(/хотя бы одну позицию/);
+  });
+
+  it("does not duplicate a list item or its audit event on a repeated add", () => {
+    const repo = makeRepo();
+    const before = repo.getState().audit.length;
+    repo.addToList(buyer, "list-cafe-weekly", "off-alpha-sugar");
+    repo.addToList(buyer, "list-cafe-weekly", "off-alpha-sugar");
+    const list = repo.getState().buyerLists.find((l) => l.id === "list-cafe-weekly")!;
+    expect(list.offerIds.filter((id) => id === "off-alpha-sugar")).toHaveLength(1);
+    expect(repo.getState().audit.length).toBe(before + 1);
+  });
+
+  it("marks only the acting user's notification and audits it once", () => {
+    const repo = makeRepo();
+    const before = repo.getState().audit.length;
+    const notification = repo.getState().notifications[0]!;
+    repo.markNotificationRead(purchaser, notification.id);
+    repo.markNotificationRead(purchaser, notification.id);
+    repo.markNotificationRead(buyer, notification.id);
+    expect(repo.getState().notifications[0]!.read).toBe(true);
+    expect(repo.getState().audit.length).toBe(before + 1);
   });
 });

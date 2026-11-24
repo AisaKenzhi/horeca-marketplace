@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
 import { useApp } from "@/app/store";
-import { Notice, Section, StatusPill } from "@/components/primitives";
+import { MoneyText, Notice, Section, StatusPill } from "@/components/primitives";
 import { canModerateContent } from "@/domain/authorization";
 
 /**
@@ -49,7 +49,9 @@ export function OperatorCockpit(): ReactNode {
                 <td data-label="Витрина">
                   <StatusPill label="черновик (демо)" tone="neutral" />
                 </td>
-                <td data-label="Мин. заказ">{s.minimumOrderValue.amount} ₸</td>
+                <td data-label="Мин. заказ">
+                  <MoneyText value={s.minimumOrderValue} />
+                </td>
               </tr>
             ))}
           </tbody>

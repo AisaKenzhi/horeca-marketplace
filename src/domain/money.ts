@@ -7,6 +7,8 @@
  * through explicit, tested helpers.
  */
 
+import { validationError } from "./errors";
+
 export type CurrencyCode = "KZT";
 
 export interface Money {
@@ -16,12 +18,14 @@ export interface Money {
 }
 
 export function isInteger(value: number): boolean {
-  return Number.isFinite(value) && Number.isInteger(value);
+  // Number.isInteger accepts values above MAX_SAFE_INTEGER where arithmetic is
+  // no longer exact. Money must stay exactly representable.
+  return Number.isSafeInteger(value);
 }
 
 export function money(amount: number, currency: CurrencyCode = "KZT"): Money {
   if (!isInteger(amount)) {
-    throw new Error(`Money amount must be an integer minor unit, got: ${amount}`);
+    throw validationError(`Money amount must be an integer minor unit, got: ${amount}`);
   }
   return { amount, currency };
 }
@@ -34,7 +38,7 @@ function assertSameCurrency(a: Money, b: Money): void {
   const ca: string = a.currency;
   const cb: string = b.currency;
   if (ca !== cb) {
-    throw new Error(`Currency mismatch: ${ca} vs ${cb}`);
+    throw validationError(`Currency mismatch: ${ca} vs ${cb}`);
   }
 }
 
@@ -61,7 +65,7 @@ export function sumMoney(
  */
 export function multiplyMoney(value: Money, quantity: number): Money {
   if (!isInteger(quantity)) {
-    throw new Error(`Quantity must be an integer, got: ${quantity}`);
+    throw validationError(`Quantity must be an integer, got: ${quantity}`);
   }
   return money(value.amount * quantity, value.currency);
 }

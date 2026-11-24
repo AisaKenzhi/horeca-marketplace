@@ -12,6 +12,19 @@ import {
   RETRYABLE_CODES,
   type ErrorCode,
 } from "@/domain/errors";
+import { money } from "@/domain/money";
+import { assertSuborderTransition } from "@/domain/orderLifecycle";
+import { proposeSupplierRevision, type RevisionLineInput } from "@/domain/revisions";
+import type { SupplierSuborder } from "@/domain/entities";
+import {
+  asBuyerLocationId,
+  asIso,
+  asOrgId,
+  asProcurementId,
+  asRevisionId,
+  asSuborderId,
+  asSupplierId,
+} from "@/domain/ids";
 
 describe("error catalogue", () => {
   it("creates a typed error with a stable code and safe message", () => {
@@ -70,5 +83,78 @@ describe("error catalogue", () => {
     for (const c of retryable) expect(isRetryable(c)).toBe(true);
     for (const c of notRetryable) expect(isRetryable(c)).toBe(false);
     expect(RETRYABLE_CODES).toEqual(retryable);
+  });
+});
+
+describe("domain failures keep their typed code", () => {
+  function codeOf(fn: () => unknown): ErrorCode | undefined {
+    try {
+      fn();
+    } catch (e) {
+      return toSafeError(e).code;
+    }
+    return undefined;
+  }
+
+  it("money rejects non-safe-integer amounts as validation, not internal", () => {
+    expect(codeOf(() => money(1.5))).toBe("validation");
+    expect(codeOf(() => money(Number.MAX_SAFE_INTEGER + 1))).toBe("validation");
+  });
+
+  it("illegal lifecycle transitions are conflicts", () => {
+    expect(codeOf(() => assertSuborderTransition("confirmed", "draft"))).toBe("conflict");
+  });
+
+  it("a foreign supplier cannot propose a change; impossible values are validation errors", () => {
+    const nowIso = "2026-11-19T12:00:00.000Z";
+    const suborder: SupplierSuborder = {
+      id: asSuborderId("sub-1"),
+      procurementId: asProcurementId("proc-1"),
+      supplierId: asSupplierId("sup-1"),
+      orgId: asOrgId("org-1"),
+      locationId: asBuyerLocationId("loc-1"),
+      status: "awaiting_supplier",
+      fulfillmentStatus: "not_started",
+      paymentStatus: "not_processed",
+      confirmedLines: null,
+      currentRevisionId: asRevisionId("rev-0"),
+      createdAt: asIso(nowIso),
+      updatedAt: asIso(nowIso),
+      version: 1,
+    };
+    const line: RevisionLineInput = {
+      offerId: "offer-1",
+      changeKind: "price_changed",
+      quantityBefore: 1,
+      quantityAfter: 1,
+      priceBefore: money(100),
+      priceAfter: money(120),
+      sellUnitLabelBefore: "шт",
+      sellUnitLabelAfter: "шт",
+      substitutedFromOfferId: null,
+      substitutedToOfferId: null,
+      reasonDemo: "демо",
+    };
+    const base = {
+      suborder,
+      lines: [line],
+      deliveryWindowDemo: null,
+      nowIso,
+      nextRevisionNumber: 1,
+    };
+    expect(
+      codeOf(() =>
+        proposeSupplierRevision({ ...base, supplierId: asSupplierId("sup-2") }),
+      ),
+    ).toBe("forbidden");
+    expect(
+      codeOf(() =>
+        proposeSupplierRevision({
+          ...base,
+          supplierId: suborder.supplierId,
+          lines: [{ ...line, priceAfter: money(-1) }],
+        }),
+      ),
+    ).toBe("validation");
   });
 });

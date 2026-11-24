@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/app/store";
 import { computeCart } from "@/domain/cart";
@@ -7,6 +7,56 @@ import { formatMoney } from "@/domain/money";
 import { toSafeError } from "@/domain/errors";
 import { describePackaging } from "@/components/format";
 import { EmptyState, MoneyText, Notice, Section } from "@/components/primitives";
+
+interface QuantityInputProps {
+  readonly value: number;
+  readonly min: number;
+  readonly step: number;
+  readonly disabled: boolean;
+  readonly label: string;
+  readonly onCommit: (quantity: number) => void;
+}
+
+/**
+ * Keeps a local draft so a field can be cleared and retyped digit by digit;
+ * a controlled `value` alone resets an empty field on the first keystroke.
+ */
+function QuantityInput({
+  value,
+  min,
+  step,
+  disabled,
+  label,
+  onCommit,
+}: QuantityInputProps): ReactNode {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+
+  return (
+    <input
+      type="number"
+      min={min}
+      step={step}
+      value={draft}
+      disabled={disabled}
+      inputMode="numeric"
+      aria-label={label}
+      onChange={(e) => {
+        const next = e.target.value;
+        setDraft(next);
+        if (next === "") return;
+        const parsed = Number(next);
+        if (Number.isSafeInteger(parsed) && parsed > 0) onCommit(parsed);
+      }}
+      onBlur={() => {
+        const parsed = Number(draft);
+        if (draft === "" || !Number.isSafeInteger(parsed) || parsed <= 0) {
+          setDraft(String(value));
+        }
+      }}
+    />
+  );
+}
 
 export function BuyerBasket(): ReactNode {
   const { repo, session, membership, messages } = useApp();
@@ -138,20 +188,20 @@ export function BuyerBasket(): ReactNode {
                         </td>
                         <td data-label="Фасовка">{describePackaging(offer)}</td>
                         <td data-label="Кол-во">
-                          <input
-                            type="number"
-                            min={1}
-                            step={1}
+                          <QuantityInput
                             value={line.quantity}
+                            min={offer.packaging.moq}
+                            step={offer.packaging.orderStep}
                             disabled={!canEditBasket}
-                            onChange={(e) =>
-                              repo.setBasketLineQuantity(
-                                session,
-                                line.id,
-                                Math.max(1, Number(e.target.value)),
-                              )
-                            }
-                            aria-label={`Количество: ${offer.title}`}
+                            label={`Количество: ${offer.title}`}
+                            onCommit={(quantity) => {
+                              try {
+                                repo.setBasketLineQuantity(session, line.id, quantity);
+                                setError(null);
+                              } catch (e) {
+                                setError(toSafeError(e).message);
+                              }
+                            }}
                           />
                         </td>
                         <td data-label="Цена">

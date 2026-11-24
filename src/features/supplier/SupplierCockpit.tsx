@@ -21,6 +21,7 @@ import {
   type ResolvedImport,
 } from "@/domain/catalogImport";
 import { toSafeError } from "@/domain/errors";
+import { money } from "@/domain/money";
 import type { SupplierOffer, SupplierSuborder } from "@/domain/entities";
 import type { AvailabilityStatus } from "@/domain/freshness";
 import type { RevisionLineInput } from "@/domain/revisions";
@@ -145,11 +146,15 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
     if (!revision) return;
     guard(() => {
       const lines: RevisionLineInput[] = revision.lines.map((l) => {
-        const offer = state.offers.find((o) => o.id === l.offerId);
+        // "Before" must be the value the buyer actually saw in the current
+        // revision, not a coincidental value from today's catalog.
         const before = l.priceAfter ?? l.priceBefore;
-        const after = before
-          ? { amount: before.amount + 100, currency: before.currency }
-          : null;
+        const after = before ? money(before.amount + 100) : null;
+        const sellUnitLabel =
+          l.sellUnitLabelAfter ??
+          l.sellUnitLabelBefore ??
+          state.offers.find((o) => o.id === l.offerId)?.packaging.sellUnit.label ??
+          null;
         return {
           offerId: l.offerId,
           changeKind: before && after ? "price_changed" : "unchanged",
@@ -157,8 +162,8 @@ function SuborderResponder({ suborder }: { suborder: SupplierSuborder }): ReactN
           quantityAfter: l.quantityAfter ?? l.quantityBefore,
           priceBefore: before,
           priceAfter: after,
-          sellUnitLabelBefore: offer?.packaging.sellUnit.label ?? null,
-          sellUnitLabelAfter: offer?.packaging.sellUnit.label ?? null,
+          sellUnitLabelBefore: sellUnitLabel,
+          sellUnitLabelAfter: sellUnitLabel,
           substitutedFromOfferId: null,
           substitutedToOfferId: null,
           reasonDemo: "Изменение цены поставщиком (демо, +100 ₸)",

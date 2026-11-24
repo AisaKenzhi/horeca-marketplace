@@ -15,6 +15,7 @@ import type {
 } from "./entities";
 import { asDecisionId, asIso, asRevisionId } from "./ids";
 import { canTransitionSuborder, assertSuborderTransition } from "./orderLifecycle";
+import { conflictError, forbiddenError, staleDataError, validationError } from "./errors";
 
 export interface RevisionLineInput {
   readonly offerId: string;
@@ -35,6 +36,32 @@ export function hasAnyChange(lines: readonly RevisionLineInput[]): boolean {
 }
 
 /**
+ * Input boundary for supplier proposals. A revision must never be able to
+ * carry an impossible price or quantity, even when a caller bypasses the UI.
+ */
+function assertRevisionLineInputs(lines: readonly RevisionLineInput[]): void {
+  for (const line of lines) {
+    for (const q of [line.quantityBefore, line.quantityAfter]) {
+      if (q !== null && (!Number.isSafeInteger(q) || q <= 0)) {
+        throw validationError(
+          "Количество в изменении должно быть целым положительным (демо).",
+        );
+      }
+    }
+    for (const p of [line.priceBefore, line.priceAfter]) {
+      if (
+        p !== null &&
+        (!Number.isSafeInteger(p.amount) || p.amount < 0 || p.currency !== "KZT")
+      ) {
+        throw validationError(
+          "Цена в изменении должна быть неотрицательной целой суммой KZT (демо).",
+        );
+      }
+    }
+  }
+}
+
+/**
  * Record a buyer decision for a specific revision. Rejects:
  *   - a decision for a revision that is not the suborder's current revision
  *   - a decision on a suborder that is not awaiting a buyer decision
@@ -52,16 +79,22 @@ export function decideOnRevision(args: {
 }): { suborder: SupplierSuborder; decision: BuyerDecision } {
   const { suborder, revision, outcome, decidedBy, nowIso, existingDecisions } = args;
   if (revision.suborderId !== suborder.id) {
-    throw new Error("Decision revision does not belong to this suborder.");
+    throw conflictError("Decision revision does not belong to this suborder.");
   }
   if (suborder.currentRevisionId !== revision.id) {
-    throw new Error("Cannot decide on a superseded revision.");
+    throw staleDataError("Cannot decide on a superseded revision.");
   }
   if (suborder.status !== "awaiting_buyer_decision") {
-    throw new Error(`Suborder is not awaiting a buyer decision (${suborder.status}).`);
+    throw conflictError(
+      `Suborder is not awaiting a buyer decision (${suborder.status}).`,
+    );
   }
-  if (existingDecisions.some((d) => d.revisionId === revision.id)) {
-    throw new Error("A decision for this revision already exists.");
+  if (
+    existingDecisions.some(
+      (d) => d.suborderId === suborder.id && d.revisionId === revision.id,
+    )
+  ) {
+    throw conflictError("A decision for this revision already exists.");
   }
 
   const target = outcome === "accepted" ? "confirmed" : "rejected";
@@ -76,7 +109,7 @@ export function decideOnRevision(args: {
       const price = l.priceAfter ?? l.priceBefore;
       const quantity = l.quantityAfter ?? l.quantityBefore;
       if (price === null || quantity === null || quantity <= 0) {
-        throw new Error(
+        throw validationError(
           "Нельзя подтвердить изменение без известной цены и количества по позиции.",
         );
       }
@@ -122,8 +155,13 @@ export function snapshotFromRevision(
     const price = l.priceAfter ?? l.priceBefore;
     const quantity = l.quantityAfter ?? l.quantityBefore;
     if (price === null || quantity === null) {
-      throw new Error(
+      throw validationError(
         "Невозможно построить подтверждённую строку без цены и количества.",
+      );
+    }
+    if (quantity <= 0) {
+      throw validationError(
+        "Невозможно подтвердить строку с неположительным количеством.",
       );
     }
     return {
@@ -152,10 +190,19 @@ export function proposeSupplierRevision(args: {
 }): { suborder: SupplierSuborder; revision: SuborderRevision } {
   const { suborder, lines, nowIso, supplierId, nextRevisionNumber } = args;
   if (!canTransitionSuborder(suborder.status, "change_proposed")) {
-    throw new Error(`Cannot propose a change from status ${suborder.status}.`);
+    throw conflictError(`Cannot propose a change from status ${suborder.status}.`);
   }
+  if (supplierId !== suborder.supplierId) {
+    throw forbiddenError(
+      "Изменение может предлагать только поставщик этой ветки (демо).",
+    );
+  }
+  if (!Number.isSafeInteger(nextRevisionNumber) || nextRevisionNumber < 1) {
+    throw validationError("Номер ревизии должен быть положительным целым числом (демо).");
+  }
+  assertRevisionLineInputs(lines);
   if (!hasAnyChange(lines)) {
-    throw new Error("A revision must actually change something.");
+    throw validationError("A revision must actually change something.");
   }
 
   const revision: SuborderRevision = {
