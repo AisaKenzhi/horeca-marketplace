@@ -62,9 +62,12 @@ create table private.platform_supplier_suborder_term_lines (
   foreign key (organization_id, buyer_request_id, supplier_suborder_id, supplier_organization_id)
     references private.platform_supplier_suborders
       (organization_id, buyer_request_id, id, supplier_organization_id) on delete restrict,
+  -- Term lines are derived from the original suborder lines. Cascade only
+  -- cleans up derived rows when a base line is removed; base snapshots,
+  -- parent request lines and workflow events are never deleted by this path.
   foreign key (supplier_suborder_id, buyer_request_line_id)
     references private.platform_supplier_suborder_lines (supplier_suborder_id, buyer_request_line_id)
-    on delete restrict
+    on delete cascade
 );
 
 create table private.platform_supplier_suborder_workflow_events (
