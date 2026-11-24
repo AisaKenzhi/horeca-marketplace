@@ -501,10 +501,10 @@ begin
   -- Serialize concurrent previews for the same tenant/SKU, including absent rows.
   -- Lock the complete set in bytewise order before row locks to avoid deadlocks.
   for v_lock_sku in
-    select distinct preview_row.value ->> 'sku' as sku
+    select distinct (preview_row.value ->> 'sku') collate "C" as sku
     from pg_catalog.jsonb_array_elements(v_job.preview -> 'rows') as preview_row(value)
     where preview_row.value ->> 'action' in ('create', 'update', 'unchanged')
-    order by sku collate "C"
+    order by 1
   loop
     perform pg_catalog.pg_advisory_xact_lock(
       pg_catalog.hashtext(p_organization_id::text),
