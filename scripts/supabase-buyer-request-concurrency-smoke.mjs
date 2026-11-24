@@ -238,9 +238,21 @@ ALTER TABLE public.buyer_procurement_requests DISABLE TRIGGER buyer_procurement_
 ALTER TABLE public.buyer_procurement_request_lines DISABLE TRIGGER buyer_procurement_request_lines_immutable;
 ALTER TABLE private.platform_supplier_suborders DISABLE TRIGGER platform_supplier_suborders_immutable;
 ALTER TABLE private.platform_supplier_suborder_lines DISABLE TRIGGER platform_supplier_suborder_lines_immutable;
+ALTER TABLE private.platform_supplier_suborder_workflows DISABLE TRIGGER platform_supplier_suborder_workflows_guard_update;
+ALTER TABLE private.platform_supplier_suborder_terms DISABLE TRIGGER platform_supplier_suborder_terms_immutable;
+ALTER TABLE private.platform_supplier_suborder_term_lines DISABLE TRIGGER platform_supplier_suborder_term_lines_immutable;
+ALTER TABLE private.platform_supplier_suborder_workflow_events DISABLE TRIGGER platform_supplier_suborder_workflow_events_immutable;
+ALTER TABLE private.platform_supplier_suborder_action_idempotency DISABLE TRIGGER platform_supplier_suborder_action_idempotency_immutable;
 ALTER TABLE public.buyer_draft_carts DISABLE TRIGGER buyer_draft_carts_guard_submission;
 ALTER TABLE public.buyer_draft_cart_items DISABLE TRIGGER buyer_draft_cart_items_guard_submission;
 
+-- Workflow-derived rows first: the append-only triggers are disabled only for
+-- this synthetic fixture cleanup, and the base request snapshots stay untouched.
+DELETE FROM private.platform_supplier_suborder_term_lines WHERE organization_id=${uuid(ids.buyerOrg)};
+DELETE FROM private.platform_supplier_suborder_workflow_events WHERE organization_id=${uuid(ids.buyerOrg)};
+DELETE FROM private.platform_supplier_suborder_action_idempotency WHERE actor_organization_id IN (${uuid(ids.buyerOrg)}, ${uuid(ids.supplierAOrg)}, ${uuid(ids.supplierBOrg)});
+DELETE FROM private.platform_supplier_suborder_terms WHERE organization_id=${uuid(ids.buyerOrg)};
+DELETE FROM private.platform_supplier_suborder_workflows WHERE organization_id=${uuid(ids.buyerOrg)};
 DELETE FROM private.platform_supplier_suborder_lines WHERE organization_id=${uuid(ids.buyerOrg)};
 DELETE FROM private.platform_supplier_suborders WHERE organization_id=${uuid(ids.buyerOrg)};
 DELETE FROM public.buyer_procurement_request_lines WHERE organization_id=${uuid(ids.buyerOrg)};
@@ -257,6 +269,11 @@ ALTER TABLE public.buyer_procurement_requests ENABLE TRIGGER buyer_procurement_r
 ALTER TABLE public.buyer_procurement_request_lines ENABLE TRIGGER buyer_procurement_request_lines_immutable;
 ALTER TABLE private.platform_supplier_suborders ENABLE TRIGGER platform_supplier_suborders_immutable;
 ALTER TABLE private.platform_supplier_suborder_lines ENABLE TRIGGER platform_supplier_suborder_lines_immutable;
+ALTER TABLE private.platform_supplier_suborder_workflows ENABLE TRIGGER platform_supplier_suborder_workflows_guard_update;
+ALTER TABLE private.platform_supplier_suborder_terms ENABLE TRIGGER platform_supplier_suborder_terms_immutable;
+ALTER TABLE private.platform_supplier_suborder_term_lines ENABLE TRIGGER platform_supplier_suborder_term_lines_immutable;
+ALTER TABLE private.platform_supplier_suborder_workflow_events ENABLE TRIGGER platform_supplier_suborder_workflow_events_immutable;
+ALTER TABLE private.platform_supplier_suborder_action_idempotency ENABLE TRIGGER platform_supplier_suborder_action_idempotency_immutable;
 ALTER TABLE public.buyer_draft_carts ENABLE TRIGGER buyer_draft_carts_guard_submission;
 ALTER TABLE public.buyer_draft_cart_items ENABLE TRIGGER buyer_draft_cart_items_guard_submission;
 COMMIT;
