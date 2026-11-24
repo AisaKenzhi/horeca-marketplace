@@ -11,14 +11,14 @@
 
 - Target/base: `feat/product-ready-tenant-foundation-2026-11-23` @ `41e47ec57e76b541c21970bacf349366db08a892`.
 - Integration branch: `feat/horeca-unified-delivery-2026-11-24`.
-- Integration HEAD: `INTEGRATION_HEAD` (будет заменено на финальный SHA перед публикацией).
+- Integration HEAD: `db1e5e3edb48df04f251e30ff7adadda3a659166` (будет заменено на финальный SHA перед публикацией).
 - Logical commits (в порядке):
   1. `80d2329` — port PR #28: buyer locations + Task 1 handoff map.
   2. `06a1ebe` — port supplier-suborder workflow backend (`8424cbd`).
   3. `049837e` — safe supplier display-name edit + adapter tests.
   4. `cecce45` — typed RPC surface в `database.types.ts`.
   5. docs/roadmap + этот handoff.
-- PR: `PR_REFERENCE`. **PR оставлен открытым, не слит**; force-push и запись в общую ветку не выполнялись.
+- PR: `#29 — https://github.com/AisaKenzhi/horeca-marketplace/pull/29`. **PR оставлен открытым, не слит**; force-push и запись в общую ветку не выполнялись.
 
 ## 3. Disposition источников
 
@@ -77,7 +77,7 @@ Integration HEAD:
 
 ```bash
 cd horeca-marketplace
-git checkout INTEGRATION_HEAD
+git checkout db1e5e3edb48df04f251e30ff7adadda3a659166
 npm ci
 npm run verify:full
 npm run e2e:ci
