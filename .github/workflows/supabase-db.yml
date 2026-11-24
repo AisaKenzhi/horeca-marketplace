@@ -43,6 +43,15 @@ jobs:
           set +a
           unset SERVICE_ROLE_KEY SERVICE_ROLE_SECRET
           node scripts/supabase-import-postgrest-smoke.mjs
+      - name: Verify concurrent buyer request submits through local Postgres
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source <(supabase status -o env)
+          set +a
+          unset SERVICE_ROLE_KEY SERVICE_ROLE_SECRET SUPABASE_SERVICE_ROLE_KEY ANON_KEY SUPABASE_ANON_KEY JWT_SECRET SUPABASE_JWT_SECRET 2>/dev/null || true
+          node scripts/supabase-buyer-request-concurrency-smoke.mjs
       - name: Stop local Supabase stack
         if: always()
         run: supabase stop --no-backup || true
