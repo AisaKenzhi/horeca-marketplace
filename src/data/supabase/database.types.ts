@@ -332,6 +332,51 @@ export type Database = {
         Args: { p_organization_id: string; p_import_id: string };
         Returns: Json;
       };
+      list_supplier_suborders: {
+        Args: { p_supplier_organization_id: string };
+        Returns: {
+          supplier_suborder_id: string;
+          status: string;
+          workflow_version: number;
+          current_terms_version: number;
+          terms_reason: string | null;
+          response_deadline_at: string | null;
+          created_at: string;
+          updated_at: string;
+          lines: Json;
+        }[];
+      };
+      accept_supplier_suborder: {
+        Args: {
+          p_supplier_organization_id: string;
+          p_supplier_suborder_id: string;
+          p_expected_version: number;
+          p_idempotency_key: string;
+        };
+        Returns: Json;
+      };
+      reject_supplier_suborder: {
+        Args: {
+          p_supplier_organization_id: string;
+          p_supplier_suborder_id: string;
+          p_reason: string;
+          p_expected_version: number;
+          p_idempotency_key: string;
+        };
+        Returns: Json;
+      };
+      propose_supplier_suborder_version: {
+        Args: {
+          p_supplier_organization_id: string;
+          p_supplier_suborder_id: string;
+          p_reason: string;
+          p_response_deadline_at: string;
+          p_lines: Json;
+          p_expected_version: number;
+          p_idempotency_key: string;
+        };
+        Returns: Json;
+      };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };

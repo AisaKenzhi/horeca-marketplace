@@ -5,6 +5,7 @@ import { BuyerProcurementListsPanel } from "@/features/account/BuyerProcurementL
 import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
 import { OrganizationAccess } from "@/features/account/OrganizationAccess";
 import { SupplierCatalogImportPanel } from "@/features/account/SupplierCatalogImportPanel";
+import { SupplierSuborderInboxPanel } from "@/features/account/SupplierSuborderInboxPanel";
 import {
   acceptOrganizationInvitation,
   canManageOrganization,
@@ -646,6 +647,16 @@ function AccountWorkspaceReady({
                 </>
               )}
             </section>
+          ) : null}
+
+          {activeOrganization?.organization_type === "supplier" ? (
+            <SupplierSuborderInboxPanel
+              key={activeOrganization.id}
+              client={client}
+              organizationId={activeOrganization.id}
+              organizationType={activeOrganization.organization_type}
+              role={activeOrganization.role}
+            />
           ) : null}
 
           {activeOrganization?.organization_type === "supplier" &&
