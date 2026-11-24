@@ -813,14 +813,16 @@ body {
 }
 
 .procurement-list-stack,
-.draft-cart-preview {
+.draft-cart-preview,
+.buyer-request-list {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   margin-top: 1rem;
 }
 .procurement-list-card,
-.draft-cart-card {
+.draft-cart-card,
+.buyer-request-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.85rem;
@@ -840,7 +842,9 @@ body {
 }
 .procurement-list-heading h3,
 .draft-cart-card h4,
-.draft-cart-preview h3 {
+.draft-cart-preview h3,
+.buyer-request-list h3,
+.buyer-request-card h4 {
   margin: 0;
 }
 .procurement-list-rename {
@@ -874,6 +878,16 @@ body {
 .draft-cart-preview {
   border-top: 1px solid var(--border);
   padding-top: 1rem;
+}
+.buyer-request-list {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+.buyer-request-card .pill {
+  white-space: nowrap;
+}
+.buyer-request-card p {
+  margin: 0.4rem 0;
 }
 .draft-cart-card h4 {
   margin-bottom: 0.65rem;

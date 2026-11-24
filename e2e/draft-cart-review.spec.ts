@@ -80,7 +80,28 @@ const offers = [
     updated_at: observedAt,
   },
 ];
-const carts = [
+interface CartMock {
+  id: string;
+  organization_id: string;
+  buyer_location_id: string | null;
+  source_list_name: string;
+  created_by: string;
+  created_at: string;
+  submitted_at: string | null;
+}
+
+interface CartItemMock {
+  id: string;
+  organization_id: string;
+  cart_id: string;
+  catalog_offer_id: string;
+  quantity: number;
+  catalog_offer_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+const cartSeeds: CartMock[] = [
   {
     id: QUANTITY_CART_ID,
     organization_id: BUYER_ORGANIZATION_ID,
@@ -88,6 +109,7 @@ const carts = [
     source_list_name: "Fix quantity",
     created_by: MOCK_USER_ID,
     created_at: "2026-11-24T00:00:02.000Z",
+    submitted_at: null,
   },
   {
     id: LOCATION_CART_ID,
@@ -96,9 +118,11 @@ const carts = [
     source_list_name: "Select location",
     created_by: MOCK_USER_ID,
     created_at: "2026-11-24T00:00:01.000Z",
+    submitted_at: null,
   },
 ];
-const cartItems = [
+const carts = cartSeeds.map((cart) => ({ ...cart }));
+const cartItemSeeds: CartItemMock[] = [
   {
     id: QUANTITY_ITEM_ID,
     organization_id: BUYER_ORGANIZATION_ID,
@@ -120,9 +144,17 @@ const cartItems = [
     updated_at: observedAt,
   },
 ];
+const cartItems = cartItemSeeds.map((item) => ({ ...item }));
+const procurementRequests: Record<string, unknown>[] = [];
+const procurementRequestLines: Record<string, unknown>[] = [];
+const idempotencyKeys = new Map<string, string>();
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function requestBody(route: Route): Record<string, unknown> {
@@ -145,7 +177,26 @@ async function fulfillJson(route: Route, body: unknown): Promise<void> {
   });
 }
 
-async function installSupabaseMocks(page: Page): Promise<void> {
+interface E2ESupabaseMockState {
+  forceStaleOnSubmit: boolean;
+  failAfterPersistOnce: boolean;
+  requestCalls: number;
+  idempotencyKeysUsed: string[];
+}
+
+async function installSupabaseMocks(page: Page): Promise<E2ESupabaseMockState> {
+  carts.splice(0, carts.length, ...cartSeeds.map((cart) => ({ ...cart })));
+  cartItems.splice(0, cartItems.length, ...cartItemSeeds.map((item) => ({ ...item })));
+  procurementRequests.splice(0, procurementRequests.length);
+  procurementRequestLines.splice(0, procurementRequestLines.length);
+  idempotencyKeys.clear();
+  const state: E2ESupabaseMockState = {
+    forceStaleOnSubmit: false,
+    failAfterPersistOnce: false,
+    requestCalls: 0,
+    idempotencyKeysUsed: [],
+  };
+
   await page.route(`${LOCAL_SUPABASE_URL}/auth/v1/**`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -184,6 +235,8 @@ async function installSupabaseMocks(page: Page): Promise<void> {
         buyer_procurement_list_items: [],
         buyer_draft_carts: carts,
         buyer_draft_cart_items: cartItems,
+        buyer_procurement_requests: procurementRequests,
+        buyer_procurement_request_lines: procurementRequestLines,
       };
       await fulfillJson(route, rowsByTable[table] ?? []);
       return;
@@ -191,29 +244,117 @@ async function installSupabaseMocks(page: Page): Promise<void> {
 
     const body = requestBody(route);
     const rowId = url.searchParams.get("id")?.replace(/^eq\./, "");
+    if (
+      request.method() === "POST" &&
+      table === "update_buyer_draft_cart_item_quantity"
+    ) {
+      const itemId = stringValue(body.p_item_id);
+      const item = cartItems.find((candidate) => candidate.id === itemId);
+      if (item && typeof body.p_quantity === "number") {
+        item.quantity = body.p_quantity;
+        item.updated_at = new Date().toISOString();
+      }
+      await fulfillJson(route, item ? item.id : null);
+      return;
+    }
+    if (request.method() === "POST" && table === "delete_buyer_draft_cart_item") {
+      const itemId = stringValue(body.p_item_id);
+      const index = cartItems.findIndex((candidate) => candidate.id === itemId);
+      if (index >= 0) cartItems.splice(index, 1);
+      await fulfillJson(route, index >= 0);
+      return;
+    }
+    if (request.method() === "POST" && table === "create_buyer_procurement_request") {
+      state.requestCalls += 1;
+      const organizationId = stringValue(body.p_organization_id);
+      const idempotencyKey = stringValue(body.p_idempotency_key);
+      state.idempotencyKeysUsed.push(idempotencyKey);
+      if (state.forceStaleOnSubmit) {
+        state.forceStaleOnSubmit = false;
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({
+            code: "40001",
+            message: "catalog terms changed or are not current",
+          }),
+        });
+        return;
+      }
+      const cart = carts.find((candidate) => candidate.id === body.p_cart_id);
+      if (!cart) {
+        await route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ code: "P0002", message: "draft cart not found" }),
+        });
+        return;
+      }
+      const key = `${organizationId}:${idempotencyKey}`;
+      const replay = idempotencyKeys.get(key);
+      if (replay) {
+        await fulfillJson(route, replay);
+        return;
+      }
+      const requestId = "00000000-0000-4000-8000-000000000099";
+      const submittedAt = new Date().toISOString();
+      procurementRequests.push({
+        id: requestId,
+        organization_id: cart.organization_id,
+        draft_cart_id: cart.id,
+        buyer_location_id: cart.buyer_location_id,
+        seller_type: "platform",
+        request_status: "submitted",
+        source_list_name: cart.source_list_name,
+        submitted_by: MOCK_USER_ID,
+        submitted_at: submittedAt,
+      });
+      for (const item of cartItems.filter((candidate) => candidate.cart_id === cart.id)) {
+        const offer = offers.find((candidate) => candidate.id === item.catalog_offer_id);
+        if (!offer) continue;
+        procurementRequestLines.push({
+          id: `request-line-${item.id}`,
+          organization_id: cart.organization_id,
+          request_id: requestId,
+          catalog_offer_id: offer.id,
+          quantity: item.quantity,
+          title: offer.title,
+          sell_unit_label: offer.sell_unit_label,
+          units_per_sell_unit: offer.units_per_sell_unit,
+          pack_amount: offer.pack_amount,
+          pack_base_unit: offer.pack_base_unit,
+          price_amount: offer.price_amount,
+          currency: offer.currency,
+          availability: offer.availability,
+          catalog_offer_version: offer.version,
+          price_observed_at: offer.price_observed_at,
+          availability_observed_at: offer.availability_observed_at,
+          created_at: submittedAt,
+        });
+      }
+      idempotencyKeys.set(key, requestId);
+      cart.submitted_at = submittedAt;
+      if (state.failAfterPersistOnce) {
+        state.failAfterPersistOnce = false;
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ message: "synthetic lost response after commit" }),
+        });
+        return;
+      }
+      await fulfillJson(route, requestId);
+      return;
+    }
     if (request.method() === "PATCH" && table === "buyer_draft_carts") {
       const cart = carts.find((candidate) => candidate.id === rowId);
       if (cart) Object.assign(cart, body);
       await fulfillJson(route, cart ? [cart] : []);
       return;
     }
-    if (request.method() === "PATCH" && table === "buyer_draft_cart_items") {
-      const item = cartItems.find((candidate) => candidate.id === rowId);
-      if (item && typeof body.quantity === "number") {
-        item.quantity = body.quantity;
-        item.updated_at = new Date().toISOString();
-      }
-      await fulfillJson(route, item ? [item] : []);
-      return;
-    }
-    if (request.method() === "DELETE" && table === "buyer_draft_cart_items") {
-      const index = cartItems.findIndex((candidate) => candidate.id === rowId);
-      const [deleted] = index >= 0 ? cartItems.splice(index, 1) : [];
-      await fulfillJson(route, deleted ? [deleted] : []);
-      return;
-    }
     await fulfillJson(route, []);
   });
+  return state;
 }
 
 test("buyer reviews saved draft carts, selects an owned location and fixes MOQ", async ({
@@ -267,4 +408,124 @@ test("buyer reviews saved draft carts, selects an owned location and fixes MOQ",
   await expect(quantityCart).toContainText("Подытог по поставщику");
   await expect(quantityCart).not.toContainText("Минимальный заказ по позиции: 2.");
   await expect(page.getByRole("button", { name: "Оформить заказ" })).toHaveCount(0);
+});
+
+test("buyer explicitly creates a platform request without accepting or paying an order", async ({
+  page,
+}) => {
+  test.skip(
+    !usesLocalAuthMock,
+    "This flow runs only against the local, mocked Supabase build used by e2e:ci.",
+  );
+  const mockState = await installSupabaseMocks(page);
+  const confirmations: string[] = [];
+  page.on("dialog", async (dialog) => {
+    confirmations.push(dialog.message());
+    await dialog.accept();
+  });
+  await page.goto("/account");
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel("Пароль").fill("test-password-123");
+  await page.getByRole("button", { name: "Войти" }).last().click();
+
+  const cart = page.locator(".draft-cart-card").filter({ hasText: "Select location" });
+  await cart
+    .getByLabel("Точка покупателя для этой корзины")
+    .selectOption(BUYER_LOCATION_ID);
+  const submit = cart.getByRole("button", { name: "Создать запрос закупки" });
+  await expect(submit).toBeEnabled();
+  await submit.click();
+
+  await expect(page.getByRole("heading", { name: "Запросы закупки" })).toBeVisible();
+  const requestCard = page.locator(".buyer-request-card");
+  await expect(requestCard).toContainText("Продавец: Платформа");
+  await expect(requestCard).toContainText("Снимок цены при регистрации");
+  await expect(requestCard).toContainText("не принят и не оплачен");
+  await expect(requestCard).toContainText("поставщики не уведомлены");
+  await expect(requestCard).toContainText("без количественного остатка");
+  expect(confirmations).toHaveLength(1);
+  expect(confirmations[0]).toContain("Это не означает принятие или оплату заказа");
+  expect(mockState.requestCalls).toBe(1);
+  expect(procurementRequests).toHaveLength(1);
+  expect(procurementRequestLines).toHaveLength(1);
+  expect(
+    carts.find((candidate) => candidate.id === LOCATION_CART_ID)?.submitted_at,
+  ).toBeTruthy();
+});
+
+test("server-side stale-price recheck blocks request creation", async ({ page }) => {
+  test.skip(
+    !usesLocalAuthMock,
+    "This flow runs only against the local, mocked Supabase build used by e2e:ci.",
+  );
+  const mockState = await installSupabaseMocks(page);
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.goto("/account");
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel("Пароль").fill("test-password-123");
+  await page.getByRole("button", { name: "Войти" }).last().click();
+
+  const cart = page.locator(".draft-cart-card").filter({ hasText: "Select location" });
+  await cart
+    .getByLabel("Точка покупателя для этой корзины")
+    .selectOption(BUYER_LOCATION_ID);
+  const submit = cart.getByRole("button", { name: "Создать запрос закупки" });
+  await expect(submit).toBeEnabled();
+  mockState.forceStaleOnSubmit = true;
+  await submit.click();
+
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Каталог изменился или данные цены и наличия устарели" }),
+  ).toContainText("Каталог изменился или данные цены и наличия устарели");
+  expect(mockState.requestCalls).toBe(1);
+  expect(procurementRequests).toHaveLength(0);
+  expect(
+    carts.find((candidate) => candidate.id === LOCATION_CART_ID)?.submitted_at,
+  ).toBeNull();
+});
+
+test("replaying after an ambiguous response returns the same persisted request", async ({
+  page,
+}) => {
+  test.skip(
+    !usesLocalAuthMock,
+    "This flow runs only against the local, mocked Supabase build used by e2e:ci.",
+  );
+  const mockState = await installSupabaseMocks(page);
+  mockState.failAfterPersistOnce = true;
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.goto("/account");
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel("Пароль").fill("test-password-123");
+  await page.getByRole("button", { name: "Войти" }).last().click();
+
+  const cart = page.locator(".draft-cart-card").filter({ hasText: "Select location" });
+  await cart
+    .getByLabel("Точка покупателя для этой корзины")
+    .selectOption(BUYER_LOCATION_ID);
+  const submit = cart.getByRole("button", { name: "Создать запрос закупки" });
+  await expect(submit).toBeEnabled();
+  await submit.click();
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Не удалось связаться с рабочим контуром" }),
+  ).toBeVisible();
+  expect(procurementRequests).toHaveLength(1);
+
+  await submit.click();
+  await expect(page.locator(".buyer-request-card")).toContainText(
+    "не принят и не оплачен",
+  );
+  expect(mockState.requestCalls).toBe(2);
+  expect(mockState.idempotencyKeysUsed).toHaveLength(2);
+  expect(mockState.idempotencyKeysUsed[0]).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(mockState.idempotencyKeysUsed[1]).toBe(mockState.idempotencyKeysUsed[0]);
+  expect(procurementRequests).toHaveLength(1);
+  expect(procurementRequestLines).toHaveLength(1);
+  expect(
+    carts.find((candidate) => candidate.id === LOCATION_CART_ID)?.submitted_at,
+  ).toBeTruthy();
 });

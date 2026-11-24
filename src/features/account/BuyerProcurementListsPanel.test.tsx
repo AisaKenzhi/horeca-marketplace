@@ -7,6 +7,8 @@ import type {
   BuyerDraftCartItemRow,
   BuyerDraftCartRow,
   BuyerLocationRow,
+  BuyerProcurementRequestLineRow,
+  BuyerProcurementRequestRow,
   BuyerProcurementListItemRow,
   BuyerProcurementListRow,
   CatalogOfferRow,
@@ -16,11 +18,13 @@ import type {
 import type { WorkspaceClient } from "@/data/supabase/workspace";
 import {
   addBuyerProcurementListItem,
+  createBuyerProcurementRequest,
   createBuyerDraftCartFromList,
   createBuyerProcurementList,
   deleteBuyerDraftCart,
   deleteBuyerProcurementList,
   loadBuyerDraftCarts,
+  loadBuyerProcurementRequests,
   loadBuyerProcurementLists,
   removeBuyerDraftCartItem,
   removeBuyerProcurementListItem,
@@ -38,10 +42,12 @@ vi.mock("@/data/supabase/workspace", () => ({
   canReadBuyerProcurement: (role: MembershipRole) =>
     role === "owner" || role === "admin" || role === "buyer" || role === "viewer",
   createBuyerDraftCartFromList: vi.fn(),
+  createBuyerProcurementRequest: vi.fn(),
   createBuyerProcurementList: vi.fn(),
   deleteBuyerDraftCart: vi.fn(),
   deleteBuyerProcurementList: vi.fn(),
   loadBuyerDraftCarts: vi.fn(),
+  loadBuyerProcurementRequests: vi.fn(),
   loadBuyerProcurementLists: vi.fn(),
   removeBuyerDraftCartItem: vi.fn(),
   removeBuyerProcurementListItem: vi.fn(),
@@ -104,6 +110,7 @@ const draftCart: BuyerDraftCartRow & { items: BuyerDraftCartItemRow[] } = {
   source_list_name: "Weekly order",
   created_by: "user-1",
   created_at: now,
+  submitted_at: null,
   items: [draftCartItem],
 };
 const draftCartWithLocation = { ...draftCart, buyer_location_id: location.id };
@@ -190,7 +197,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(loadBuyerProcurementLists).mockResolvedValue([list]);
   vi.mocked(loadBuyerDraftCarts).mockResolvedValue([]);
+  vi.mocked(loadBuyerProcurementRequests).mockResolvedValue([]);
   vi.mocked(createBuyerDraftCartFromList).mockResolvedValue("draft-cart-1");
+  vi.mocked(createBuyerProcurementRequest).mockResolvedValue("request-1");
   vi.mocked(createBuyerProcurementList).mockResolvedValue(list);
   vi.mocked(deleteBuyerDraftCart).mockResolvedValue();
   vi.mocked(renameBuyerProcurementList).mockResolvedValue(list);
@@ -307,7 +316,7 @@ describe("BuyerProcurementListsPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByText("Flour")).toHaveLength(2);
     expect(screen.getByText(/количество: 2/)).toBeInTheDocument();
-    expect(screen.getByText(/не являются заказами/)).toBeInTheDocument();
+    expect(screen.getByText(/Заказ не создаётся/)).toBeInTheDocument();
     expect(loadBuyerDraftCarts).toHaveBeenCalledTimes(2);
     expect(createBuyerProcurementList).not.toHaveBeenCalled();
     expect(addBuyerProcurementListItem).not.toHaveBeenCalled();
@@ -370,6 +379,106 @@ describe("BuyerProcurementListsPanel", () => {
     expect(screen.getByText(/заказ не создан/)).toBeInTheDocument();
   });
 
+  it("requires explicit buyer confirmation and displays a non-accepted request snapshot", async () => {
+    const user = userEvent.setup();
+    const readyOffers = offers.map((offer) =>
+      offer.id === offerId
+        ? {
+            ...offer,
+            price_amount: 12.5,
+            currency: "KZT",
+            moq: 2,
+            order_step: 1,
+            availability: "in_stock" as const,
+            price_valid_until: "2026-11-25T00:00:00.000Z",
+          }
+        : offer,
+    );
+    const submittedCart = { ...draftCartWithLocation, submitted_at: now };
+    const request: BuyerProcurementRequestRow & {
+      lines: BuyerProcurementRequestLineRow[];
+    } = {
+      id: "65000000-0000-4000-8000-000000000011",
+      organization_id: organizationId,
+      draft_cart_id: draftCart.id,
+      buyer_location_id: location.id,
+      seller_type: "platform",
+      request_status: "submitted",
+      source_list_name: draftCart.source_list_name,
+      submitted_by: "user-1",
+      submitted_at: now,
+      lines: [
+        {
+          id: "request-line-1",
+          organization_id: organizationId,
+          request_id: "65000000-0000-4000-8000-000000000011",
+          catalog_offer_id: offerId,
+          quantity: 2,
+          title: "Flour",
+          sell_unit_label: "bag",
+          units_per_sell_unit: 1,
+          pack_amount: 5,
+          pack_base_unit: "kg",
+          price_amount: 12.5,
+          currency: "KZT",
+          availability: "in_stock",
+          catalog_offer_version: 1,
+          price_observed_at: now,
+          availability_observed_at: now,
+          created_at: now,
+        },
+      ],
+    };
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(loadBuyerDraftCarts)
+      .mockResolvedValueOnce([draftCartWithLocation])
+      .mockResolvedValue([submittedCart]);
+    vi.mocked(loadBuyerProcurementRequests)
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([request]);
+    vi.mocked(createBuyerProcurementRequest).mockResolvedValue(request.id);
+    renderPanel("buyer", readyOffers);
+
+    const createButton = await screen.findByRole("button", {
+      name: "Создать запрос закупки",
+    });
+    expect(createButton).toBeEnabled();
+    await user.click(createButton);
+
+    const confirmationMessage = confirmSpy.mock.calls[0]?.[0];
+    expect(confirmationMessage).toContain("не означает принятие или оплату заказа");
+    expect(confirmationMessage).toContain(
+      "без количественного остатка и не гарантирует товар к покупке",
+    );
+    expect(createBuyerProcurementRequest).toHaveBeenCalledWith(
+      client,
+      organizationId,
+      "buyer",
+      draftCart.id,
+      expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    );
+    const requestCard = await screen.findByText("Зарегистрирован");
+    const requestArticle = requestCard.closest<HTMLElement>(".buyer-request-card");
+    if (!requestArticle) throw new Error("Buyer request card was not rendered");
+    const sellerLabel = within(requestArticle).getByText(/Продавец:/).parentElement;
+    if (!sellerLabel) throw new Error("Buyer request seller label was not rendered");
+    expect(sellerLabel).toHaveTextContent("Платформа");
+    expect(
+      within(requestArticle).getByText(/Снимок цены при регистрации/),
+    ).toBeInTheDocument();
+    expect(
+      within(requestArticle).getByText(/не принят и не оплачен/),
+    ).toBeInTheDocument();
+    expect(
+      within(requestArticle).getByText(/поставщики не уведомлены/),
+    ).toBeInTheDocument();
+    expect(
+      within(requestArticle).getByText(
+        /без количественного остатка и не гарантирует товар к покупке/,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("lets a buyer remove a blocked draft-cart line without creating an order", async () => {
     const user = userEvent.setup();
     vi.mocked(loadBuyerDraftCarts).mockResolvedValue([draftCart]);
@@ -402,7 +511,9 @@ describe("BuyerProcurementListsPanel", () => {
     expect(
       screen.getByText(/Условия предложения изменились после создания корзины/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/цена и наличие не подтверждаются/)).toBeInTheDocument();
+    expect(screen.getByText(/условия нужно проверить заново/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Создать запрос закупки" })).toBeDisabled();
+    expect(createBuyerProcurementRequest).not.toHaveBeenCalled();
   });
 
   it("keeps viewer access read-only and hides draft-cart creation", async () => {

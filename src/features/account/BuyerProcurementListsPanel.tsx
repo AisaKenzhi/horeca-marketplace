@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import type {
   BuyerLocationRow,
   CatalogOfferRow,
@@ -6,6 +13,7 @@ import type {
   SupplierProfileRow,
 } from "@/data/supabase/database.types";
 import {
+  formatCurrencyAmount,
   formatCurrencyMinor,
   reviewDraftCart,
   type DraftCartReadinessReview,
@@ -14,11 +22,13 @@ import {
   addBuyerProcurementListItem,
   canManageBuyerProcurement,
   canReadBuyerProcurement,
+  createBuyerProcurementRequest,
   createBuyerDraftCartFromList,
   createBuyerProcurementList,
   deleteBuyerDraftCart,
   deleteBuyerProcurementList,
   loadBuyerDraftCarts,
+  loadBuyerProcurementRequests,
   loadBuyerProcurementLists,
   removeBuyerDraftCartItem,
   removeBuyerProcurementListItem,
@@ -28,6 +38,7 @@ import {
   updateBuyerProcurementListItemQuantity,
   workspaceErrorMessage,
   type BuyerDraftCartWithItems,
+  type BuyerProcurementRequestWithLines,
   type WorkspaceClient,
 } from "@/data/supabase/workspace";
 
@@ -64,6 +75,8 @@ export function BuyerProcurementListsPanel({
   const [addOfferIds, setAddOfferIds] = useState<Record<string, string>>({});
   const [addQuantities, setAddQuantities] = useState<Record<string, string>>({});
   const [draftCarts, setDraftCarts] = useState<BuyerDraftCartWithItems[]>([]);
+  const [requests, setRequests] = useState<BuyerProcurementRequestWithLines[]>([]);
+  const requestKeys = useRef(new Map<string, string>());
 
   const canRead = canReadBuyerProcurement(role);
   const canManage = canManageBuyerProcurement(role);
@@ -106,6 +119,7 @@ export function BuyerProcurementListsPanel({
     if (!canRead) {
       setLists([]);
       setDraftCarts([]);
+      setRequests([]);
       setLoading(false);
       return () => {
         active = false;
@@ -114,11 +128,13 @@ export function BuyerProcurementListsPanel({
     void Promise.all([
       loadBuyerProcurementLists(client, organizationId, role),
       loadBuyerDraftCarts(client, organizationId, role),
+      loadBuyerProcurementRequests(client, organizationId, role),
     ])
-      .then(([listResult, cartResult]) => {
+      .then(([listResult, cartResult, requestResult]) => {
         if (active) {
           setLists(listResult);
           setDraftCarts(cartResult);
+          setRequests(requestResult);
         }
       })
       .catch((error: unknown) => {
@@ -251,6 +267,45 @@ export function BuyerProcurementListsPanel({
     );
   }
 
+  async function submitDraftCart(cart: BuyerDraftCartWithItems) {
+    const review = draftCartReviewsById.get(cart.id);
+    if (!canManage || !review?.readyForCurrentChecks || cart.submitted_at) return;
+    if (
+      !window.confirm(
+        "Создать запрос закупки для платформы-продавца? Это не означает принятие или оплату заказа. Счёт не выставляется, поставщики не уведомляются, доставка не оформляется, а наличие не резервируется. Наличие сообщено поставщиком без количественного остатка и не гарантирует товар к покупке.",
+      )
+    ) {
+      return;
+    }
+
+    let idempotencyKey = requestKeys.current.get(cart.id);
+    if (!idempotencyKey) {
+      idempotencyKey = window.crypto.randomUUID();
+      requestKeys.current.set(cart.id, idempotencyKey);
+    }
+
+    setBusy(true);
+    setActionError("");
+    setMessage("");
+    try {
+      const requestId = await createBuyerProcurementRequest(
+        client,
+        organizationId,
+        role,
+        cart.id,
+        idempotencyKey,
+      );
+      setMessage(
+        `Запрос закупки ${requestId} зарегистрирован. Он не принят и не оплачен; поставщики не уведомлены, доставка и резервирование наличия не выполнялись.`,
+      );
+      setRefreshKey((value) => value + 1);
+    } catch (error: unknown) {
+      setActionError(workspaceErrorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function removeDraftCartItem(itemId: string) {
     await runMutation(
       () => removeBuyerDraftCartItem(client, organizationId, role, itemId),
@@ -277,8 +332,8 @@ export function BuyerProcurementListsPanel({
         Списки закупок
       </h2>
       <p className="small muted">
-        Списки сохраняются в этой организации. Черновая корзина создаётся отдельно и не
-        отправляется как заказ.
+        Списки и черновики сохраняются в этой организации. Только покупатель-менеджер
+        может явно зарегистрировать запрос закупки после повторной серверной проверки.
       </p>
       {loadError ? (
         <div className="notice notice-danger" role="alert">
@@ -560,6 +615,10 @@ export function BuyerProcurementListsPanel({
         ))}
       </div>
 
+      {requests.length > 0 ? (
+        <BuyerProcurementRequests requests={requests} locations={locations} />
+      ) : null}
+
       {draftCarts.length > 0 ? (
         <section
           className="draft-cart-preview"
@@ -567,9 +626,10 @@ export function BuyerProcurementListsPanel({
         >
           <h3 id="draft-cart-preview-title">Новые черновые корзины</h3>
           <p className="small muted">
-            Корзины сохранены в этой организации. Они не являются заказами и не
-            отправляются поставщикам; цена и наличие не подтверждаются и требуют повторной
-            проверки.
+            До создания запроса корзины редактируются. После подтверждения запрос и его
+            снимок условий фиксируются; поставщики не уведомляются, наличие не
+            резервируется. Наличие — сообщение поставщика без количественного остатка; это
+            не гарантия товара.
           </p>
           {draftCarts.map((cart, index) => (
             <article className="draft-cart-card" key={cart.id}>
@@ -578,7 +638,7 @@ export function BuyerProcurementListsPanel({
                   Черновая корзина {draftCarts.length - index} · список «
                   {cart.source_list_name}»
                 </h4>
-                {canManage ? (
+                {canManage && cart.submitted_at === null ? (
                   <button
                     className="btn btn-ghost"
                     type="button"
@@ -589,18 +649,30 @@ export function BuyerProcurementListsPanel({
                   </button>
                 ) : null}
               </div>
-              <DraftCartReview
-                cartId={cart.id}
-                locationId={cart.buyer_location_id}
-                locations={locations}
-                review={draftCartReviewsById.get(cart.id) ?? null}
-                canManage={canManage}
-                busy={busy}
-                onLocationChange={(locationId) =>
-                  void saveDraftCartLocation(cart.id, locationId)
-                }
-              />
-              {cart.items.length === 0 ? (
+              {cart.submitted_at ? (
+                <p className="notice notice-info" role="status">
+                  Этот черновик заморожен после регистрации запроса. Сохранённый снимок и
+                  его статус показаны в разделе «Запросы закупки».
+                </p>
+              ) : (
+                <DraftCartReview
+                  cartId={cart.id}
+                  locationId={cart.buyer_location_id}
+                  locations={locations}
+                  review={draftCartReviewsById.get(cart.id) ?? null}
+                  canManage={canManage}
+                  busy={busy}
+                  onLocationChange={(locationId) =>
+                    void saveDraftCartLocation(cart.id, locationId)
+                  }
+                  onSubmit={() => void submitDraftCart(cart)}
+                />
+              )}
+              {cart.submitted_at ? (
+                <p className="small muted">
+                  Текущий каталог не меняет уже сохранённый снимок запроса.
+                </p>
+              ) : cart.items.length === 0 ? (
                 <p className="empty">В черновой корзине пока нет позиций.</p>
               ) : (
                 <ul className="list-simple procurement-list-items">
@@ -701,6 +773,77 @@ export function BuyerProcurementListsPanel({
   );
 }
 
+function BuyerProcurementRequests({
+  requests,
+  locations,
+}: {
+  readonly requests: readonly BuyerProcurementRequestWithLines[];
+  readonly locations: readonly BuyerLocationRow[];
+}): ReactNode {
+  return (
+    <section className="buyer-request-list" aria-labelledby="buyer-request-list-title">
+      <h3 id="buyer-request-list-title">Запросы закупки</h3>
+      <p className="small muted">
+        В пилотной модели продавец — платформа. Зарегистрированный запрос не является
+        принятым заказом или счётом: оплата, уведомления поставщикам, доставка и резерв
+        наличия не выполняются. Наличие указано поставщиком без количественного остатка и
+        не гарантирует товар к покупке.
+      </p>
+      <div className="procurement-list-stack">
+        {requests.map((request) => {
+          const location = locations.find(
+            (candidate) => candidate.id === request.buyer_location_id,
+          );
+          return (
+            <article className="buyer-request-card" key={request.id}>
+              <div className="procurement-list-heading">
+                <h4>Запрос {request.id.slice(0, 8)}</h4>
+                <span className="pill pill-info">Зарегистрирован</span>
+              </div>
+              <p className="small">
+                <strong>Продавец:</strong> Платформа · <strong>Список:</strong> «
+                {request.source_list_name}»
+              </p>
+              <p className="small">
+                <strong>Точка покупателя:</strong> {location?.name ?? "сохранённая точка"}
+              </p>
+              <p className="small muted">
+                Создан {new Date(request.submitted_at).toLocaleString("ru-RU")} · не
+                принят и не оплачен · поставщики не уведомлены · наличие не
+                резервировалось · доставка не оформлялась.
+              </p>
+              <p className="small muted">
+                Наличие сообщено поставщиком без количественного остатка и не гарантирует
+                товар к покупке.
+              </p>
+              {request.lines.length > 0 ? (
+                <ul className="account-list buyer-request-lines">
+                  {request.lines.map((line) => (
+                    <li key={line.id}>
+                      <strong>{line.title}</strong>
+                      <span>
+                        Количество: {line.quantity} {line.sell_unit_label}
+                      </span>
+                      <span className="small muted">
+                        Снимок цены при регистрации:{" "}
+                        {formatCurrencyAmount(line.price_amount, line.currency) ??
+                          "не распознана"}
+                        ; версия предложения {line.catalog_offer_version}.
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="empty">В запросе нет строк.</p>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function DraftCartReview({
   cartId,
   locationId,
@@ -709,6 +852,7 @@ function DraftCartReview({
   canManage,
   busy,
   onLocationChange,
+  onSubmit,
 }: {
   readonly cartId: string;
   readonly locationId: string | null;
@@ -717,6 +861,7 @@ function DraftCartReview({
   readonly canManage: boolean;
   readonly busy: boolean;
   readonly onLocationChange: (locationId: string) => void;
+  readonly onSubmit: () => void;
 }): ReactNode {
   if (!review) return null;
   return (
@@ -806,6 +951,23 @@ function DraftCartReview({
           </ul>
         </section>
       ))}
+      {canManage ? (
+        <div className="submit-bar">
+          <p className="small muted">
+            При создании запроса сервер ещё раз проверит версии, цену, наличие, сроки
+            наблюдений, MOQ и шаг. Поставщик сообщает наличие без количественного остатка;
+            это не резервирует товар и не гарантирует его к покупке.
+          </p>
+          <button
+            className="btn btn-primary"
+            type="button"
+            disabled={busy || !review.readyForCurrentChecks}
+            onClick={onSubmit}
+          >
+            Создать запрос закупки
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

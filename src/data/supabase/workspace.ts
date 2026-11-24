@@ -3,6 +3,8 @@ import type { PersistentImportRow } from "@/domain/catalogImport";
 import type {
   BuyerDraftCartItemRow,
   BuyerDraftCartRow,
+  BuyerProcurementRequestLineRow,
+  BuyerProcurementRequestRow,
   BuyerProcurementListItemRow,
   BuyerProcurementListRow,
   BuyerLocationRow,
@@ -75,6 +77,7 @@ export type WorkspaceErrorCode =
   | "not_found"
   | "stale_preview"
   | "idempotency_conflict"
+  | "already_submitted"
   | "operation_failed";
 
 export function canManageSupplierCatalog(role: MembershipRole): boolean {
@@ -107,13 +110,13 @@ function mapError(error: unknown): WorkspaceError {
       typeof error === "object" && error !== null && "message" in error
         ? error.message
         : null;
-    return new WorkspaceError(
-      message === "idempotency key conflict"
-        ? "idempotency_conflict"
-        : "offer_unavailable",
-    );
+    if (message === "idempotency key conflict") {
+      return new WorkspaceError("idempotency_conflict");
+    }
+    return new WorkspaceError("offer_unavailable");
   }
   if (code === "40001") return new WorkspaceError("stale_preview");
+  if (code === "55000") return new WorkspaceError("already_submitted");
   if (code === "22P02" || code === "23514" || code === "23503") {
     return new WorkspaceError("invalid");
   }
@@ -176,9 +179,11 @@ export function workspaceErrorMessage(error: unknown): string {
       case "not_found":
         return "Запись больше недоступна. Обновите страницу и попробуйте ещё раз.";
       case "stale_preview":
-        return "Каталог изменился после предпросмотра. Загрузите файл и выполните предпросмотр заново.";
+        return "Каталог изменился или данные цены и наличия устарели. Проверьте черновую корзину заново.";
       case "idempotency_conflict":
-        return "Ключ импорта уже использован с другим содержимым. Начните предпросмотр заново.";
+        return "Ключ повтора уже использован для другого содержимого. Обновите черновик и повторите действие.";
+      case "already_submitted":
+        return "Этот черновик уже использован для запроса и заморожен. Обновите список запросов.";
       case "unavailable":
         return "Не удалось связаться с рабочим контуром. Проверьте подключение и повторите попытку.";
       case "operation_failed":
@@ -894,10 +899,73 @@ export type BuyerDraftCartWithItems = BuyerDraftCartRow & {
   items: BuyerDraftCartItemRow[];
 };
 
+export type BuyerProcurementRequest = BuyerProcurementRequestRow;
+export type BuyerProcurementRequestLine = BuyerProcurementRequestLineRow;
+export type BuyerProcurementRequestWithLines = BuyerProcurementRequestRow & {
+  lines: BuyerProcurementRequestLineRow[];
+};
+
 const BUYER_DRAFT_CART_COLUMNS =
-  "id,organization_id,buyer_location_id,source_list_name,created_by,created_at" as const;
+  "id,organization_id,buyer_location_id,source_list_name,created_by,created_at,submitted_at" as const;
 const BUYER_DRAFT_CART_ITEM_COLUMNS =
   "id,organization_id,cart_id,catalog_offer_id,quantity,catalog_offer_version,created_at,updated_at" as const;
+const BUYER_PROCUREMENT_REQUEST_COLUMNS =
+  "id,organization_id,draft_cart_id,buyer_location_id,seller_type,request_status,source_list_name,submitted_by,submitted_at" as const;
+const BUYER_PROCUREMENT_REQUEST_LINE_COLUMNS =
+  "id,organization_id,request_id,catalog_offer_id,quantity,title,sell_unit_label,units_per_sell_unit,pack_amount,pack_base_unit,price_amount,currency,availability,catalog_offer_version,price_observed_at,availability_observed_at,created_at" as const;
+
+export async function loadBuyerProcurementRequests(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+): Promise<BuyerProcurementRequestWithLines[]> {
+  assertProcurementListAccess(role);
+  const [requestsResult, linesResult] = await Promise.all([
+    client
+      .from("buyer_procurement_requests")
+      .select(BUYER_PROCUREMENT_REQUEST_COLUMNS)
+      .eq("organization_id", organizationId)
+      .order("submitted_at", { ascending: false }),
+    client
+      .from("buyer_procurement_request_lines")
+      .select(BUYER_PROCUREMENT_REQUEST_LINE_COLUMNS)
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: true }),
+  ]);
+  const requests = unwrap(requestsResult.data, requestsResult.error);
+  const lines = unwrap(linesResult.data, linesResult.error);
+  const linesByRequest = new Map<string, BuyerProcurementRequestLineRow[]>();
+  for (const line of lines) {
+    const requestLines = linesByRequest.get(line.request_id) ?? [];
+    requestLines.push(line);
+    linesByRequest.set(line.request_id, requestLines);
+  }
+  return requests.map((request) => ({
+    ...request,
+    lines: linesByRequest.get(request.id) ?? [],
+  }));
+}
+
+export async function createBuyerProcurementRequest(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  cartId: string,
+  idempotencyKey: string,
+): Promise<string> {
+  assertProcurementListAccess(role, true);
+  if (!isUuid(cartId) || !isUuid(idempotencyKey)) {
+    throw new WorkspaceError("invalid");
+  }
+  const { data, error } = await client.rpc("create_buyer_procurement_request", {
+    p_organization_id: organizationId,
+    p_cart_id: cartId,
+    p_idempotency_key: idempotencyKey,
+  });
+  const requestId = unwrap(data, error);
+  if (!isUuid(requestId)) throw new WorkspaceError("operation_failed");
+  return requestId;
+}
 
 export async function loadBuyerDraftCarts(
   client: WorkspaceClient,
@@ -969,14 +1037,20 @@ export async function updateBuyerDraftCartItemQuantity(
 ): Promise<BuyerDraftCartItem> {
   assertProcurementListAccess(role, true);
   validateProcurementQuantity(quantity);
-  const { data, error } = await client
+  const { data, error } = await client.rpc("update_buyer_draft_cart_item_quantity", {
+    p_organization_id: organizationId,
+    p_item_id: itemId,
+    p_quantity: quantity,
+  });
+  const updatedId = unwrap(data, error);
+  if (updatedId !== itemId) throw new WorkspaceError("operation_failed");
+  const refreshed = await client
     .from("buyer_draft_cart_items")
-    .update({ quantity })
+    .select(BUYER_DRAFT_CART_ITEM_COLUMNS)
     .eq("organization_id", organizationId)
     .eq("id", itemId)
-    .select(BUYER_DRAFT_CART_ITEM_COLUMNS)
     .single();
-  return unwrap(data, error);
+  return unwrap(refreshed.data, refreshed.error);
 }
 
 export async function removeBuyerDraftCartItem(
@@ -986,15 +1060,11 @@ export async function removeBuyerDraftCartItem(
   itemId: string,
 ): Promise<void> {
   assertProcurementListAccess(role, true);
-  const { data, error } = await client
-    .from("buyer_draft_cart_items")
-    .delete()
-    .eq("organization_id", organizationId)
-    .eq("id", itemId)
-    .select("id")
-    .maybeSingle();
-  if (error) throw mapError(error);
-  if (!data) throw new WorkspaceError("not_found");
+  const { data, error } = await client.rpc("delete_buyer_draft_cart_item", {
+    p_organization_id: organizationId,
+    p_item_id: itemId,
+  });
+  unwrapSuccessfulMutation(data, error);
 }
 
 export async function deleteBuyerDraftCart(

@@ -81,13 +81,16 @@ select ok(
   and not has_column_privilege('authenticated','public.buyer_draft_carts','created_by','INSERT')
   and not has_column_privilege('authenticated','public.buyer_draft_carts','organization_id','UPDATE')
   and has_column_privilege('authenticated','public.buyer_draft_carts','buyer_location_id','UPDATE')
-  and not has_column_privilege('authenticated','public.buyer_draft_carts','source_list_name','UPDATE')
-  and not has_table_privilege('authenticated','public.buyer_draft_carts','UPDATE')
-  and has_column_privilege('authenticated','public.buyer_draft_cart_items','quantity','UPDATE')
-  and not has_column_privilege('authenticated','public.buyer_draft_cart_items','organization_id','UPDATE')
-  and not has_column_privilege('authenticated','public.buyer_draft_cart_items','catalog_offer_id','UPDATE')
-  and not has_column_privilege('authenticated','public.buyer_draft_cart_items','catalog_offer_version','UPDATE')
-  and not has_table_privilege('authenticated','public.buyer_draft_carts','INSERT')
+      and not has_column_privilege('authenticated','public.buyer_draft_carts','source_list_name','UPDATE')
+      and not has_table_privilege('authenticated','public.buyer_draft_carts','UPDATE')
+      and not has_column_privilege('authenticated','public.buyer_draft_cart_items','organization_id','UPDATE')
+      and not has_column_privilege('authenticated','public.buyer_draft_cart_items','catalog_offer_id','UPDATE')
+      and not has_column_privilege('authenticated','public.buyer_draft_cart_items','catalog_offer_version','UPDATE')
+      and not has_column_privilege('authenticated','public.buyer_draft_cart_items','quantity','UPDATE')
+      and not has_table_privilege('authenticated','public.buyer_draft_cart_items','DELETE')
+      and has_function_privilege('authenticated','public.update_buyer_draft_cart_item_quantity(uuid,uuid,integer)','EXECUTE')
+      and has_function_privilege('authenticated','public.delete_buyer_draft_cart_item(uuid,uuid)','EXECUTE')
+      and not has_table_privilege('authenticated','public.buyer_draft_carts','INSERT')
   and not has_any_column_privilege('authenticated','public.buyer_draft_carts','INSERT')
   and not has_table_privilege('authenticated','public.buyer_draft_cart_items','INSERT')
   and not has_any_column_privilege('authenticated','public.buyer_draft_cart_items','INSERT'),
@@ -145,8 +148,8 @@ select throws_ok(
   '42501',null,'authenticated clients cannot directly insert even stale offer lines'
 );
 select lives_ok(
-  $$update public.buyer_draft_cart_items set quantity=5 where id=current_setting('test.cart_item_id')::uuid$$,
-  'buyer can update a cart quantity'
+  $$select public.update_buyer_draft_cart_item_quantity('22000000-0000-4000-8000-000000000001',current_setting('test.cart_item_id')::uuid,5)$$,
+  'buyer updates a cart quantity through the parent-locking RPC'
 );
 select is((select quantity from public.buyer_draft_cart_items where id=current_setting('test.cart_item_id')::uuid),5,'quantity update persists');
 select lives_ok(
@@ -187,9 +190,9 @@ select lives_ok(
   'viewer delete is filtered by RLS'
 );
 select is((select count(*)::int from public.buyer_draft_carts),1,'viewer delete leaves the cart intact');
-select lives_ok(
+select throws_ok(
   $$update public.buyer_draft_cart_items set quantity=9 where id=current_setting('test.cart_item_id')::uuid$$,
-  'viewer update is filtered by RLS'
+  '42501',null,'viewer cannot update cart lines directly'
 );
 select is((select quantity from public.buyer_draft_cart_items where id=current_setting('test.cart_item_id')::uuid),5,'viewer update did not change quantity');
 select lives_ok(
@@ -201,9 +204,9 @@ select is(
   '52000000-0000-4000-8000-000000000001',
   'viewer cannot change the selected buyer location'
 );
-select lives_ok(
+select throws_ok(
   $$delete from public.buyer_draft_cart_items where id=current_setting('test.cart_item_id')::uuid$$,
-  'viewer cannot delete a cart line'
+  '42501',null,'viewer cannot delete cart lines directly'
 );
 select is((select count(*)::int from public.buyer_draft_cart_items),2,'viewer delete leaves cart lines intact');
 reset role;

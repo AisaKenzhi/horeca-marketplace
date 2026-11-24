@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   BuyerDraftCartItemRow,
   BuyerDraftCartRow,
+  BuyerProcurementRequestLineRow,
+  BuyerProcurementRequestRow,
   MembershipRole,
 } from "./database.types";
 import {
@@ -9,10 +11,12 @@ import {
   canManageBuyerProcurement,
   canReadBuyerProcurement,
   createBuyerDraftCartFromList,
+  createBuyerProcurementRequest,
   createBuyerProcurementList,
   deleteBuyerDraftCart,
   deleteBuyerProcurementList,
   loadBuyerDraftCarts,
+  loadBuyerProcurementRequests,
   loadBuyerProcurementLists,
   removeBuyerDraftCartItem,
   removeBuyerProcurementListItem,
@@ -120,6 +124,7 @@ describe("buyer procurement list access", () => {
       source_list_name: "Pantry",
       created_by: "user-a",
       created_at: "2026-11-24T00:00:00.000Z",
+      submitted_at: null,
     };
     const item: BuyerDraftCartItemRow = {
       id: "cart-item-a",
@@ -157,6 +162,79 @@ describe("buyer procurement list access", () => {
     });
   });
 
+  it("loads buyer-facing request snapshots with organization-scoped queries", async () => {
+    const request: BuyerProcurementRequestRow = {
+      id: "request-a",
+      organization_id: "org-a",
+      draft_cart_id: "cart-a",
+      buyer_location_id: "location-a",
+      seller_type: "platform",
+      request_status: "submitted",
+      source_list_name: "Pantry",
+      submitted_by: "user-a",
+      submitted_at: "2026-11-24T00:00:00.000Z",
+    };
+    const line: BuyerProcurementRequestLineRow = {
+      id: "request-line-a",
+      organization_id: "org-a",
+      request_id: "request-a",
+      catalog_offer_id: "offer-a",
+      quantity: 4,
+      title: "Flour",
+      sell_unit_label: "bag",
+      units_per_sell_unit: 1,
+      pack_amount: 5,
+      pack_base_unit: "kg",
+      price_amount: 17.25,
+      currency: "KZT",
+      availability: "in_stock",
+      catalog_offer_version: 2,
+      price_observed_at: "2026-11-24T00:00:00.000Z",
+      availability_observed_at: "2026-11-24T00:00:00.000Z",
+      created_at: "2026-11-24T00:00:00.000Z",
+    };
+    const { client, calls } = mockClient([], null, {
+      buyer_procurement_requests: [request],
+      buyer_procurement_request_lines: [line],
+    });
+
+    await expect(
+      loadBuyerProcurementRequests(client, "org-a", "viewer"),
+    ).resolves.toEqual([{ ...request, lines: [line] }]);
+    expect(calls.map(({ table, filters }) => [table, filters])).toEqual([
+      ["buyer_procurement_requests", [["organization_id", "org-a"]]],
+      ["buyer_procurement_request_lines", [["organization_id", "org-a"]]],
+    ]);
+  });
+
+  it("creates an idempotent request only through the buyer-manager RPC", async () => {
+    const requestId = "65000000-0000-4000-8000-000000000001";
+    const cartId = "65000000-0000-4000-8000-000000000002";
+    const idempotencyKey = "65000000-0000-4000-8000-000000000003";
+    const { client, rpc } = mockClient(requestId);
+
+    await expect(
+      createBuyerProcurementRequest(client, "org-a", "buyer", cartId, idempotencyKey),
+    ).resolves.toBe(requestId);
+    expect(rpc).toHaveBeenCalledWith("create_buyer_procurement_request", {
+      p_organization_id: "org-a",
+      p_cart_id: cartId,
+      p_idempotency_key: idempotencyKey,
+    });
+
+    const denied = mockClient(requestId);
+    await expect(
+      createBuyerProcurementRequest(
+        denied.client,
+        "org-a",
+        "viewer",
+        cartId,
+        idempotencyKey,
+      ),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "permission" });
+    expect(denied.rpc).not.toHaveBeenCalled();
+  });
+
   it("updates only the selected location on a draft cart scoped to its organization and id", async () => {
     const updatedCart: BuyerDraftCartRow = {
       id: "cart-a",
@@ -165,6 +243,7 @@ describe("buyer procurement list access", () => {
       source_list_name: "Pantry",
       created_by: "user-a",
       created_at: "2026-11-24T00:00:00.000Z",
+      submitted_at: null,
     };
     const { client, calls } = mockClient(updatedCart);
 
@@ -194,8 +273,6 @@ describe("buyer procurement list access", () => {
     await addBuyerProcurementListItem(client, "org-a", "buyer", "l1", "o1", 3);
     await updateBuyerProcurementListItemQuantity(client, "org-a", "admin", "i1", 4);
     await removeBuyerProcurementListItem(client, "org-a", "owner", "i1");
-    await updateBuyerDraftCartItemQuantity(client, "org-a", "buyer", "ci1", 8);
-    await removeBuyerDraftCartItem(client, "org-a", "admin", "ci1");
     await deleteBuyerDraftCart(client, "org-a", "owner", "cart-a");
     for (const call of calls.slice(1, 3)) {
       expect(call.filters).toContainEqual(["organization_id", "org-a"]);
@@ -211,14 +288,46 @@ describe("buyer procurement list access", () => {
       expect(call.filters).toContainEqual(["organization_id", "org-a"]);
       expect(call.filters).toContainEqual(["id", "i1"]);
     }
-    for (const call of calls.slice(6, 8)) {
-      expect(call.filters).toContainEqual(["organization_id", "org-a"]);
-      expect(call.filters).toContainEqual(["id", "ci1"]);
-    }
-    expect(calls[8]?.filters).toContainEqual(["organization_id", "org-a"]);
-    expect(calls[8]?.filters).toContainEqual(["id", "cart-a"]);
-    expect(calls[6]?.values).toEqual({ quantity: 8 });
-    expect(calls[8]?.table).toBe("buyer_draft_carts");
+    expect(calls[6]?.filters).toContainEqual(["organization_id", "org-a"]);
+    expect(calls[6]?.filters).toContainEqual(["id", "cart-a"]);
+    expect(calls[6]?.table).toBe("buyer_draft_carts");
+  });
+
+  it("updates and deletes draft lines through parent-locking RPCs only", async () => {
+    const item: BuyerDraftCartItemRow = {
+      id: "ci1",
+      organization_id: "org-a",
+      cart_id: "cart-a",
+      catalog_offer_id: "offer-a",
+      quantity: 8,
+      catalog_offer_version: 2,
+      created_at: "2026-11-24T00:00:00.000Z",
+      updated_at: "2026-11-24T00:00:00.000Z",
+    };
+    const rpc = vi
+      .fn()
+      .mockResolvedValueOnce({ data: "ci1", error: null })
+      .mockResolvedValueOnce({ data: true, error: null });
+    const base = mockClient(item, null, { buyer_draft_cart_items: item });
+    const client = { from: base.from, rpc } as unknown as WorkspaceClient;
+
+    await expect(
+      updateBuyerDraftCartItemQuantity(client, "org-a", "buyer", "ci1", 8),
+    ).resolves.toEqual(item);
+    await expect(
+      removeBuyerDraftCartItem(client, "org-a", "admin", "ci1"),
+    ).resolves.toBeUndefined();
+    expect(rpc).toHaveBeenNthCalledWith(1, "update_buyer_draft_cart_item_quantity", {
+      p_organization_id: "org-a",
+      p_item_id: "ci1",
+      p_quantity: 8,
+    });
+    expect(rpc).toHaveBeenNthCalledWith(2, "delete_buyer_draft_cart_item", {
+      p_organization_id: "org-a",
+      p_item_id: "ci1",
+    });
+    expect(base.calls).toHaveLength(1);
+    expect(base.calls[0]?.action).toBe("select");
   });
 
   it("denies every unauthorized role before database access", async () => {
@@ -234,6 +343,15 @@ describe("buyer procurement list access", () => {
       ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "permission" });
       await expect(
         createBuyerDraftCartFromList(client, "org-a", role, "list-a"),
+      ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "permission" });
+      await expect(
+        createBuyerProcurementRequest(
+          client,
+          "org-a",
+          role,
+          "65000000-0000-4000-8000-000000000002",
+          "65000000-0000-4000-8000-000000000003",
+        ),
       ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "permission" });
       await expect(
         updateBuyerDraftCartItemQuantity(client, "org-a", role, "item-a", 2),

@@ -105,6 +105,7 @@ export type BuyerDraftCartRow = {
   source_list_name: string;
   created_by: string;
   created_at: string;
+  submitted_at: string | null;
 };
 
 export type BuyerDraftCartItemRow = {
@@ -116,6 +117,38 @@ export type BuyerDraftCartItemRow = {
   catalog_offer_version: number;
   created_at: string;
   updated_at: string;
+};
+
+export type BuyerProcurementRequestRow = {
+  id: string;
+  organization_id: string;
+  draft_cart_id: string;
+  buyer_location_id: string;
+  seller_type: "platform";
+  request_status: "submitted";
+  source_list_name: string;
+  submitted_by: string;
+  submitted_at: string;
+};
+
+export type BuyerProcurementRequestLineRow = {
+  id: string;
+  organization_id: string;
+  request_id: string;
+  catalog_offer_id: string;
+  quantity: number;
+  title: string;
+  sell_unit_label: string;
+  units_per_sell_unit: number;
+  pack_amount: number;
+  pack_base_unit: PackBaseUnit;
+  price_amount: number;
+  currency: string;
+  availability: "in_stock";
+  catalog_offer_version: number;
+  price_observed_at: string;
+  availability_observed_at: string;
+  created_at: string;
 };
 
 export type Database = {
@@ -212,6 +245,12 @@ export type Database = {
         },
         Partial<Pick<BuyerDraftCartItemRow, "quantity">>
       >;
+      buyer_procurement_requests: Table<BuyerProcurementRequestRow, never, never>;
+      buyer_procurement_request_lines: Table<
+        BuyerProcurementRequestLineRow,
+        never,
+        never
+      >;
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -260,6 +299,26 @@ export type Database = {
       create_buyer_draft_cart: {
         Args: { p_organization_id: string; p_source_list_id: string };
         Returns: string;
+      };
+      create_buyer_procurement_request: {
+        Args: {
+          p_organization_id: string;
+          p_cart_id: string;
+          p_idempotency_key: string;
+        };
+        Returns: string;
+      };
+      update_buyer_draft_cart_item_quantity: {
+        Args: {
+          p_organization_id: string;
+          p_item_id: string;
+          p_quantity: number;
+        };
+        Returns: string;
+      };
+      delete_buyer_draft_cart_item: {
+        Args: { p_organization_id: string; p_item_id: string };
+        Returns: boolean;
       };
       preview_supplier_catalog_import: {
         Args: {
