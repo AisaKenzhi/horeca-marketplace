@@ -516,6 +516,78 @@ describe("BuyerProcurementListsPanel", () => {
     expect(createBuyerProcurementRequest).not.toHaveBeenCalled();
   });
 
+  it("names every blocking reason instead of showing a generic blocked cart", async () => {
+    vi.mocked(loadBuyerDraftCarts).mockResolvedValue([draftCart]);
+    renderPanel();
+
+    await screen.findByRole("heading", { name: /Черновая корзина 1/ });
+    const locationIssues = await screen.findByRole("list", {
+      name: "Проблемы точки покупателя",
+    });
+    expect(locationIssues).toHaveTextContent("Выберите точку покупателя");
+    expect(screen.getByText("Цена не указана в предложении.")).toBeInTheDocument();
+    expect(screen.getByText(/заблокировано: 1/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Создать запрос закупки" })).toBeDisabled();
+  });
+
+  it("marks a draft cart from another organization as scope mismatch", async () => {
+    vi.mocked(loadBuyerDraftCarts).mockResolvedValue([
+      { ...draftCart, organization_id: "foreign-org" },
+    ]);
+    renderPanel();
+
+    expect(
+      await screen.findByText(
+        "Черновая корзина принадлежит другой организации и не может быть отправлена.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Черновая корзина недоступна в этой организации."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Создать запрос закупки" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps per-supplier reasons and the idempotency key after a rejected submit", async () => {
+    const user = userEvent.setup();
+    const readyOffers = offers.map((offer) =>
+      offer.id === offerId
+        ? {
+            ...offer,
+            price_amount: 12.5,
+            currency: "KZT",
+            moq: 2,
+            availability: "in_stock" as const,
+            price_valid_until: "2026-11-25T00:00:00.000Z",
+          }
+        : offer,
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(loadBuyerDraftCarts).mockResolvedValue([draftCartWithLocation]);
+    vi.mocked(createBuyerProcurementRequest).mockRejectedValue(
+      new Error("terms changed"),
+    );
+    renderPanel("buyer", readyOffers);
+
+    const submit = await screen.findByRole("button", {
+      name: "Создать запрос закупки",
+    });
+    await user.click(submit);
+    await user.click(submit);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Причины по поставщикам указаны в карточках черновой корзины ниже",
+    );
+    expect(loadBuyerDraftCarts).toHaveBeenCalledTimes(1);
+    expect(createBuyerProcurementRequest).toHaveBeenCalledTimes(2);
+    const keys = vi
+      .mocked(createBuyerProcurementRequest)
+      .mock.calls.map((call) => call[4]);
+    expect(keys[0]).toBe(keys[1]);
+    expect(screen.queryByText("Зарегистрирован")).not.toBeInTheDocument();
+  });
+
   it("keeps viewer access read-only and hides draft-cart creation", async () => {
     renderPanel("viewer");
     await screen.findByRole("heading", { name: "Weekly order", level: 3 });

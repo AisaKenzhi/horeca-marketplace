@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { MembershipRole } from "@/data/supabase/database.types";
+import { membershipRoleLabel } from "@/features/account/roleLabels";
 import {
   changeOrganizationMemberRole,
   createOrganizationInvitation,
@@ -124,7 +125,7 @@ export function OrganizationAccess({
           >
             {editableRoles.map((value) => (
               <option key={value} value={value}>
-                {value}
+                {membershipRoleLabel(value)}
               </option>
             ))}
           </select>
@@ -153,7 +154,7 @@ export function OrganizationAccess({
         {members.map((member) => (
           <li key={member.user_id}>
             <strong>{member.email}</strong>
-            <span>Роль: {member.role}</span>
+            <span>Роль: {membershipRoleLabel(member.role)}</span>
             <div className="action-row">
               {member.user_id !== userId ? (
                 <>
@@ -215,7 +216,7 @@ export function OrganizationAccess({
           <li key={invitation.invitation_id}>
             <strong>{invitation.email}</strong>
             <span>
-              Роль: {invitation.role} · истекает{" "}
+              Роль: {membershipRoleLabel(invitation.role)} · истекает{" "}
               {new Date(invitation.expires_at).toLocaleString()}
             </span>
             <button

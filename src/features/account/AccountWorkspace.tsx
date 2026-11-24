@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/data/supabase/client";
+import { evaluateFreshness } from "@/domain/freshness";
 import { BuyerProcurementListsPanel } from "@/features/account/BuyerProcurementListsPanel";
+import { membershipRoleLabel } from "@/features/account/roleLabels";
 import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
 import { OrganizationAccess } from "@/features/account/OrganizationAccess";
 import { SupplierCatalogImportPanel } from "@/features/account/SupplierCatalogImportPanel";
@@ -71,7 +73,36 @@ function Notice({
   children: ReactNode;
   tone?: "info" | "warn" | "danger";
 }): ReactNode {
-  return <div className={`notice notice-${tone}`}>{children}</div>;
+  return (
+    <div
+      className={`notice notice-${tone}`}
+      role={tone === "danger" ? "alert" : undefined}
+    >
+      {children}
+    </div>
+  );
+}
+
+function AccountFreshnessNotice({
+  value,
+  observedAt,
+  label,
+}: {
+  readonly value: unknown;
+  readonly observedAt: string | null;
+  readonly label: string;
+}): ReactNode {
+  const freshness = evaluateFreshness(
+    { value: value ?? null, observedAt },
+    new Date().toISOString(),
+  );
+  if (freshness.state === "fresh") return null;
+  return (
+    <strong className="freshness-warning">
+      ({label}:{" "}
+      {freshness.state === "stale" ? "наблюдение устарело" : "свежесть не подтверждена"})
+    </strong>
+  );
 }
 
 function AccountAuth({
@@ -81,7 +112,7 @@ function AccountAuth({
   client: WorkspaceClient;
   inviteToken: string | null;
 }): ReactNode {
-  const [mode, setMode] = useState<"sign_in" | "sign_up">("sign_in");
+  const [mode, setMode] = useState<"sign_in" | "sign_up" | "recover">("sign_in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,7 +125,16 @@ function AccountAuth({
     setError("");
     setMessage("");
     try {
-      if (mode === "sign_up") {
+      if (mode === "recover") {
+        const { error: authError } = await client.auth.resetPasswordForEmail(
+          email.trim(),
+          { redirectTo: `${window.location.origin}/account` },
+        );
+        if (authError) throw authError;
+        setMessage(
+          "Если адрес зарегистрирован, отправим ссылку для восстановления доступа. Мы не сообщаем, существует ли аккаунт.",
+        );
+      } else if (mode === "sign_up") {
         const { data, error: authError } = await client.auth.signUp({
           email: email.trim(),
           password,
@@ -119,7 +159,7 @@ function AccountAuth({
     }
   }
 
-  function changeMode(nextMode: "sign_in" | "sign_up") {
+  function changeMode(nextMode: "sign_in" | "sign_up" | "recover") {
     setMode(nextMode);
     setError("");
     setMessage("");
@@ -140,24 +180,26 @@ function AccountAuth({
           Настоящая Supabase Auth-сессия. Демо-персоны не используются для определения
           доступа.
         </p>
-        <div className="account-tabs" role="group" aria-label="Действие с аккаунтом">
-          <button
-            type="button"
-            className={`btn ${mode === "sign_in" ? "btn-primary" : "btn-ghost"}`}
-            aria-pressed={mode === "sign_in"}
-            onClick={() => changeMode("sign_in")}
-          >
-            Войти
-          </button>
-          <button
-            type="button"
-            className={`btn ${mode === "sign_up" ? "btn-primary" : "btn-ghost"}`}
-            aria-pressed={mode === "sign_up"}
-            onClick={() => changeMode("sign_up")}
-          >
-            Создать аккаунт
-          </button>
-        </div>
+        {mode !== "recover" ? (
+          <div className="account-tabs" role="group" aria-label="Действие с аккаунтом">
+            <button
+              type="button"
+              className={`btn ${mode === "sign_in" ? "btn-primary" : "btn-ghost"}`}
+              aria-pressed={mode === "sign_in"}
+              onClick={() => changeMode("sign_in")}
+            >
+              Войти
+            </button>
+            <button
+              type="button"
+              className={`btn ${mode === "sign_up" ? "btn-primary" : "btn-ghost"}`}
+              aria-pressed={mode === "sign_up"}
+              onClick={() => changeMode("sign_up")}
+            >
+              Создать аккаунт
+            </button>
+          </div>
+        ) : null}
         <form className="account-form" onSubmit={(event) => void submit(event)}>
           <label className="field" htmlFor="account-email">
             Email
@@ -171,24 +213,49 @@ function AccountAuth({
               onChange={(event) => setEmail(event.target.value)}
             />
           </label>
-          <label className="field" htmlFor="account-password">
-            Пароль
-            <input
-              id="account-password"
-              type="password"
-              autoComplete={mode === "sign_up" ? "new-password" : "current-password"}
-              minLength={8}
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </label>
+          {mode !== "recover" ? (
+            <label className="field" htmlFor="account-password">
+              Пароль
+              <input
+                id="account-password"
+                type="password"
+                autoComplete={mode === "sign_up" ? "new-password" : "current-password"}
+                minLength={8}
+                required
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </label>
+          ) : null}
           {error ? <Notice tone="danger">{error}</Notice> : null}
           {message ? <Notice>{message}</Notice> : null}
           <button className="btn btn-primary" type="submit" disabled={busy}>
-            {busy ? "Подождите…" : mode === "sign_up" ? "Зарегистрироваться" : "Войти"}
+            {busy
+              ? "Подождите…"
+              : mode === "sign_up"
+                ? "Зарегистрироваться"
+                : mode === "recover"
+                  ? "Отправить ссылку"
+                  : "Войти"}
           </button>
         </form>
+        {mode === "recover" ? (
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => changeMode("sign_in")}
+          >
+            Вернуться ко входу
+          </button>
+        ) : (
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => changeMode("recover")}
+          >
+            Забыли пароль?
+          </button>
+        )}
         <p className="small muted">
           Публичный ключ Supabase не выдаёт права на данные: доступ ограничивают grants и
           серверные RLS policies.
@@ -198,15 +265,82 @@ function AccountAuth({
   );
 }
 
-function useAuthenticatedUser(client: WorkspaceClient) {
+export function AccountPasswordUpdate({
+  onUpdatePassword,
+  onDone,
+}: {
+  readonly onUpdatePassword: (password: string) => Promise<void>;
+  readonly onDone: () => void;
+}): ReactNode {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      await onUpdatePassword(password);
+      setMessage("Пароль обновлён. Используйте его при следующем входе.");
+    } catch (caught) {
+      setError(workspaceErrorMessage(caught));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="account-page">
+      <section className="card account-card" aria-labelledby="password-update-title">
+        <h1 id="password-update-title">Новый пароль</h1>
+        <p className="small muted">
+          Ссылка восстановления подтверждена. Новый пароль сохраняется через Supabase Auth
+          только для текущей сессии; демо-персоны здесь не используются.
+        </p>
+        <form className="account-form" onSubmit={(event) => void submit(event)}>
+          <label className="field" htmlFor="new-password">
+            Новый пароль
+            <input
+              id="new-password"
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </label>
+          {error ? <Notice tone="danger">{error}</Notice> : null}
+          {message ? <Notice>{message}</Notice> : null}
+          <button className="btn btn-primary" type="submit" disabled={busy}>
+            {busy ? "Подождите…" : "Сохранить новый пароль"}
+          </button>
+        </form>
+        {message ? (
+          <button className="btn" type="button" onClick={onDone}>
+            Перейти в рабочее пространство
+          </button>
+        ) : null}
+      </section>
+    </main>
+  );
+}
+
+function useAuthenticatedUser(client: WorkspaceClient, onPasswordRecovery: () => void) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const recoveryRef = useRef(onPasswordRecovery);
+  recoveryRef.current = onPasswordRecovery;
 
   useEffect(() => {
     let active = true;
     let authEventRevision = 0;
-    const { data } = client.auth.onAuthStateChange((_event, session) => {
+    const { data } = client.auth.onAuthStateChange((event, session) => {
       authEventRevision += 1;
+      if (event === "PASSWORD_RECOVERY") recoveryRef.current();
       setUser(session?.user ?? null);
       setLoading(false);
     });
@@ -330,7 +464,7 @@ function AccountWorkspaceReady({
     } catch {
       acceptedToken.current = null;
       setInviteNotice(
-        "Не удалось принять приглашение. Проверьте совпадение email; ссылка может быть отозвана, использована или истекла.",
+        "Ссылка недействительна: истекла, отозвана, уже использована или оформлена на другой email. Обратитесь к администратору организации за новой ссылкой.",
       );
     } finally {
       setInvitationBusy(false);
@@ -466,7 +600,10 @@ function AccountWorkspaceReady({
               <div className="account-org-summary">
                 <strong>{activeOrganization.name}</strong>
                 <span>{organizationTypeLabel(activeOrganization.organization_type)}</span>
-                <span>Роль: {activeOrganization.role}</span>
+                <span>
+                  Роль: {membershipRoleLabel(activeOrganization.role)}
+                  {activeOrganization.role === "viewer" ? " (только чтение)" : ""}
+                </span>
               </div>
             ) : null}
           </section>
@@ -717,8 +854,19 @@ function AccountWorkspaceReady({
                       </div>
                     </dl>
                     <p className="small muted">
-                      Цена обновлена: {formatTimestamp(offer.price_observed_at)}; наличие:{" "}
-                      {formatTimestamp(offer.availability_observed_at)}.
+                      Цена обновлена: {formatTimestamp(offer.price_observed_at)}{" "}
+                      <AccountFreshnessNotice
+                        value={offer.price_amount}
+                        observedAt={offer.price_observed_at}
+                        label="цена"
+                      />
+                      ; наличие: {formatTimestamp(offer.availability_observed_at)}{" "}
+                      <AccountFreshnessNotice
+                        value={offer.availability}
+                        observedAt={offer.availability_observed_at}
+                        label="наличие"
+                      />
+                      .
                     </p>
                   </div>
                 </article>
@@ -1211,6 +1359,13 @@ function formatTimestamp(value: string): string {
 export function AccountWorkspace(): ReactNode {
   const client = getSupabaseClient();
   const [inviteToken, setInviteToken] = useState<string | null>(null);
+  // A recovery link's PASSWORD_RECOVERY event can be emitted before React has
+  // subscribed, and auth-js clears the fragment during initialisation. Capture
+  // the intent synchronously on first render, before either can happen.
+  const [recoveryLink] = useState(() => {
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    return params.get("type") === "recovery" && params.has("access_token");
+  });
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
     const token = params.get("invite");
@@ -1224,17 +1379,26 @@ export function AccountWorkspace(): ReactNode {
     }
   }, []);
   if (!client) return <AccountConfigurationNotice />;
-  return <AccountWorkspaceWithClient client={client} inviteToken={inviteToken} />;
+  return (
+    <AccountWorkspaceWithClient
+      client={client}
+      inviteToken={inviteToken}
+      recoveryLink={recoveryLink}
+    />
+  );
 }
 
 function AccountWorkspaceWithClient({
   client,
   inviteToken,
+  recoveryLink,
 }: {
   client: WorkspaceClient;
   inviteToken: string | null;
+  recoveryLink: boolean;
 }): ReactNode {
-  const { user, loading } = useAuthenticatedUser(client);
+  const [recoveryMode, setRecoveryMode] = useState(recoveryLink);
+  const { user, loading } = useAuthenticatedUser(client, () => setRecoveryMode(true));
   if (loading) {
     return (
       <main className="account-page">
@@ -1242,6 +1406,17 @@ function AccountWorkspaceWithClient({
           Проверяем Supabase Auth-сессию…
         </p>
       </main>
+    );
+  }
+  if (recoveryMode) {
+    return (
+      <AccountPasswordUpdate
+        onUpdatePassword={async (password) => {
+          const { error } = await client.auth.updateUser({ password });
+          if (error) throw error;
+        }}
+        onDone={() => setRecoveryMode(false)}
+      />
     );
   }
   return user ? (
