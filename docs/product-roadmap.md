@@ -4,6 +4,18 @@
 **Срез кода:** ветка `feat/product-ready-tenant-foundation-2026-11-23`, commit `46d2a4e7eaa5e713f78d43256b5c394c5a34c626` (Coder A stream complete within its boundaries).\
 **Цель:** развить проект от приватного прототипа до подготовленного и проверенного закрытого пилота, а затем — только после отдельных бизнес-, юридических и операционных решений — до возможного публичного запуска.
 
+## Единая последовательная интеграция (2026-11-24)
+
+Этот срез собран **одним агентом последовательно в одной integration feature branch**, а не тремя параллельными потоками. Три brief-файла task-1/task-2/task-3 остаются справочными чек-листами; мастер-задание о последовательной интеграции определяет порядок.
+
+- Целевая база: `feat/product-ready-tenant-foundation-2026-11-23` @ `41e47ec57e76b541c21970bacf349366db08a892`.
+- Integration branch: `feat/horeca-unified-delivery-2026-11-24` (создана от базы, общая ветка не менялась).
+- Источники: PR #28 (`bb95d9d`) — ported; legacy backend `8424cbd` — ported; legacy inbox UI `f493384` — reviewed, **не портирован**; рабочий каталог Пети `/workspace/horeca-marketplace-task3` и ветка `feat/supplier-suborder-backend-lifecycle-2026-11-24` в этом окружении отсутствуют, поэтому его заявленные результаты **не перепроверены**.
+- Добавлено: безопасные edit/delete buyer locations и edit display_name supplier profile; server-side supplier-suborder workflow (969-строчная миграция с private tables, deny-by-default grants, typed RPC, immutable events/receipts, version/idempotency/audit), 7-й pgTAP набор, typed contract в `docs/supplier-suborder-workflow.md`, все шесть workflow RPC в generated types.
+- Не добавлено: operator moderation queue (в БД нет доверенной platform-moderator роли), удаление аккаунта/организации и retention, kk-локализация, большой inbox UI,и любые реальные заказы/уведомления/оплата/доставка, hosted/staging/production подключения.
+
+Детальные SHA, команды, счётчики, skip-причины и open decisions — в [`handoff-unified-delivery.md`](handoff-unified-delivery.md). Это **локально/CI проверенный срез**, не готовый Product Ready или запуск.
+
 ## Коротко: где проект сейчас
 
 Проект прошёл дальше первоначального P0-прототипа. В нём есть демо-путь на синтетических данных и отдельный опциональный account/workspace-путь на Supabase: аутентифицированные организации и участники, каталог поставщиков, списки закупок, черновики корзины, безопасный импорт каталога и сохранение покупательского procurement request с неизменяемыми снимками строк и внутренними подзаказами по поставщикам.
@@ -26,7 +38,7 @@ Mobile buyer-flow E2E smoke test уже входит в базу `46d2a4e`; по
 
 ### Следующее по roadmap
 
-Поток A завершён в своих границах на `bf3b0d1`. Далее Task 2 (supplier onboarding/catalog/moderation) и Task 3 (backend lifecycle supplier suborders) идут отдельными ветками. Task 1 оставлен только для проверки остаточных buyer/account вопросов и не должен повторять уже закрытую работу. Перед кодом по Task 3 обязательно проверить и сравнить незлитые supplier workflow/UI ветки с текущей базой.
+Поток A завершён в своих границах на `bf3b0d1`. Для этого среза остаточные buyer/account пункты, безопасная часть supplier profile и backend supplier-suborder workflow собраны последовательно в одной integration branch; inbox UI и moderation остаются следующими шагами/блокерами. Старые формулировки «три независимых потока идут отдельными ветками» относятся к предыдущему плану и заменены разделом «Единая последовательная интеграция» выше.
 
 **Пока явно не реализовано и не входит в текущие coding-задачи:** реальные уведомления поставщикам, резервирование запасов, оплата/расчёты, счета и налоги, доставка и production deployment. Для каждого из этих направлений нужны отдельные продуктовые и юридические решения; production и внешние действия требуют отдельного разрешения.
 
