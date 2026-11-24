@@ -1,5 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
+  BuyerDraftCartItemRow,
+  BuyerDraftCartRow,
   BuyerProcurementListItemRow,
   BuyerProcurementListRow,
   BuyerLocationRow,
@@ -64,6 +66,7 @@ export interface WorkspaceSnapshot {
 
 export type WorkspaceErrorCode =
   | "invalid"
+  | "offer_unavailable"
   | "permission"
   | "duplicate"
   | "unavailable"
@@ -94,7 +97,8 @@ function mapError(error: unknown): WorkspaceError {
   const code = errorCode(error);
   if (code === "23505") return new WorkspaceError("duplicate");
   if (code === "42501") return new WorkspaceError("permission");
-  if (code === "PGRST116") return new WorkspaceError("not_found");
+  if (code === "PGRST116" || code === "P0002") return new WorkspaceError("not_found");
+  if (code === "P0001") return new WorkspaceError("offer_unavailable");
   if (code === "22P02" || code === "23514" || code === "23503") {
     return new WorkspaceError("invalid");
   }
@@ -148,6 +152,8 @@ export function workspaceErrorMessage(error: unknown): string {
     switch (error.code) {
       case "invalid":
         return "Проверьте введённые данные и повторите попытку.";
+      case "offer_unavailable":
+        return "Одно или несколько предложений больше недоступны. Обновите список и попробуйте снова.";
       case "permission":
         return "У этой учётной записи нет прав на это действие.";
       case "duplicate":
@@ -652,6 +658,112 @@ export async function removeBuyerProcurementListItem(
     .delete()
     .eq("organization_id", organizationId)
     .eq("id", itemId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw mapError(error);
+  if (!data) throw new WorkspaceError("not_found");
+}
+
+export type BuyerDraftCart = BuyerDraftCartRow;
+export type BuyerDraftCartItem = BuyerDraftCartItemRow;
+export type BuyerDraftCartWithItems = BuyerDraftCartRow & {
+  items: BuyerDraftCartItemRow[];
+};
+
+const BUYER_DRAFT_CART_COLUMNS =
+  "id,organization_id,source_list_name,created_by,created_at" as const;
+const BUYER_DRAFT_CART_ITEM_COLUMNS =
+  "id,organization_id,cart_id,catalog_offer_id,quantity,catalog_offer_version,created_at,updated_at" as const;
+
+export async function loadBuyerDraftCarts(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+): Promise<BuyerDraftCartWithItems[]> {
+  assertProcurementListAccess(role);
+  const [cartsResult, itemsResult] = await Promise.all([
+    client
+      .from("buyer_draft_carts")
+      .select(BUYER_DRAFT_CART_COLUMNS)
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: false }),
+    client
+      .from("buyer_draft_cart_items")
+      .select(BUYER_DRAFT_CART_ITEM_COLUMNS)
+      .eq("organization_id", organizationId)
+      .order("created_at", { ascending: true }),
+  ]);
+  const carts = unwrap(cartsResult.data, cartsResult.error);
+  const items = unwrap(itemsResult.data, itemsResult.error);
+  return carts.map((cart) => ({
+    ...cart,
+    items: items.filter((item) => item.cart_id === cart.id),
+  }));
+}
+
+export async function createBuyerDraftCartFromList(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  sourceListId: string,
+): Promise<string> {
+  assertProcurementListAccess(role, true);
+  const { data, error } = await client.rpc("create_buyer_draft_cart", {
+    p_organization_id: organizationId,
+    p_source_list_id: sourceListId,
+  });
+  return unwrap(data, error);
+}
+
+export async function updateBuyerDraftCartItemQuantity(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  itemId: string,
+  quantity: number,
+): Promise<BuyerDraftCartItem> {
+  assertProcurementListAccess(role, true);
+  validateProcurementQuantity(quantity);
+  const { data, error } = await client
+    .from("buyer_draft_cart_items")
+    .update({ quantity })
+    .eq("organization_id", organizationId)
+    .eq("id", itemId)
+    .select(BUYER_DRAFT_CART_ITEM_COLUMNS)
+    .single();
+  return unwrap(data, error);
+}
+
+export async function removeBuyerDraftCartItem(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  itemId: string,
+): Promise<void> {
+  assertProcurementListAccess(role, true);
+  const { data, error } = await client
+    .from("buyer_draft_cart_items")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("id", itemId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw mapError(error);
+  if (!data) throw new WorkspaceError("not_found");
+}
+
+export async function deleteBuyerDraftCart(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  cartId: string,
+): Promise<void> {
+  assertProcurementListAccess(role, true);
+  const { data, error } = await client
+    .from("buyer_draft_carts")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("id", cartId)
     .select("id")
     .maybeSingle();
   if (error) throw mapError(error);

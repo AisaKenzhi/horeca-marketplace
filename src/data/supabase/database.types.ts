@@ -97,6 +97,25 @@ export type BuyerProcurementListItemRow = {
   updated_at: string;
 };
 
+export type BuyerDraftCartRow = {
+  id: string;
+  organization_id: string;
+  source_list_name: string;
+  created_by: string;
+  created_at: string;
+};
+
+export type BuyerDraftCartItemRow = {
+  id: string;
+  organization_id: string;
+  cart_id: string;
+  catalog_offer_id: string;
+  quantity: number;
+  catalog_offer_version: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Database = {
   public: {
     Tables: {
@@ -169,6 +188,22 @@ export type Database = {
         },
         Partial<Pick<BuyerProcurementListItemRow, "quantity">>
       >;
+      buyer_draft_carts: Table<
+        BuyerDraftCartRow,
+        { organization_id: string; source_list_name: string; created_by?: string },
+        never
+      >;
+      buyer_draft_cart_items: Table<
+        BuyerDraftCartItemRow,
+        {
+          organization_id: string;
+          cart_id: string;
+          catalog_offer_id: string;
+          quantity: number;
+          catalog_offer_version: number;
+        },
+        Partial<Pick<BuyerDraftCartItemRow, "quantity">>
+      >;
     };
     Views: { [_ in never]: never };
     Functions: {
@@ -214,6 +249,10 @@ export type Database = {
         Returns: boolean;
       };
       accept_organization_invitation: { Args: { p_token: string }; Returns: string };
+      create_buyer_draft_cart: {
+        Args: { p_organization_id: string; p_source_list_id: string };
+        Returns: string;
+      };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };

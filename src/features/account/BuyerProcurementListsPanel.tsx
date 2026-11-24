@@ -8,13 +8,19 @@ import {
   addBuyerProcurementListItem,
   canManageBuyerProcurement,
   canReadBuyerProcurement,
+  createBuyerDraftCartFromList,
   createBuyerProcurementList,
+  deleteBuyerDraftCart,
   deleteBuyerProcurementList,
+  loadBuyerDraftCarts,
   loadBuyerProcurementLists,
+  removeBuyerDraftCartItem,
   removeBuyerProcurementListItem,
   renameBuyerProcurementList,
+  updateBuyerDraftCartItemQuantity,
   updateBuyerProcurementListItemQuantity,
   workspaceErrorMessage,
+  type BuyerDraftCartWithItems,
   type WorkspaceClient,
 } from "@/data/supabase/workspace";
 
@@ -27,20 +33,6 @@ interface Props {
 }
 
 type ProcurementList = Awaited<ReturnType<typeof loadBuyerProcurementLists>>[number];
-
-type DraftCart = {
-  readonly id: string;
-  readonly listId: string;
-  readonly listName: string;
-  readonly lines: readonly {
-    readonly id: string;
-    readonly offerId: string;
-    readonly title: string;
-    readonly supplierName: string;
-    readonly sellUnit: string;
-    readonly quantity: number;
-  }[];
-};
 
 export function BuyerProcurementListsPanel({
   client,
@@ -62,7 +54,7 @@ export function BuyerProcurementListsPanel({
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [addOfferIds, setAddOfferIds] = useState<Record<string, string>>({});
   const [addQuantities, setAddQuantities] = useState<Record<string, string>>({});
-  const [draftCarts, setDraftCarts] = useState<DraftCart[]>([]);
+  const [draftCarts, setDraftCarts] = useState<BuyerDraftCartWithItems[]>([]);
 
   const canRead = canReadBuyerProcurement(role);
   const canManage = canManageBuyerProcurement(role);
@@ -87,14 +79,21 @@ export function BuyerProcurementListsPanel({
     setLoadError("");
     if (!canRead) {
       setLists([]);
+      setDraftCarts([]);
       setLoading(false);
       return () => {
         active = false;
       };
     }
-    void loadBuyerProcurementLists(client, organizationId, role)
-      .then((result) => {
-        if (active) setLists(result);
+    void Promise.all([
+      loadBuyerProcurementLists(client, organizationId, role),
+      loadBuyerDraftCarts(client, organizationId, role),
+    ])
+      .then(([listResult, cartResult]) => {
+        if (active) {
+          setLists(listResult);
+          setDraftCarts(cartResult);
+        }
       })
       .catch((error: unknown) => {
         if (active) setLoadError(workspaceErrorMessage(error));
@@ -191,30 +190,40 @@ export function BuyerProcurementListsPanel({
     );
   }
 
-  function addListToNewDraftCart(list: ProcurementList) {
-    const cart: DraftCart = {
-      id: crypto.randomUUID(),
-      listId: list.id,
-      listName: list.name,
-      lines: list.items.map((item) => {
-        const offer = offersById.get(item.catalog_offer_id);
-        return {
-          id: item.id,
-          offerId: item.catalog_offer_id,
-          title: offer?.title ?? "Предложение сейчас недоступно",
-          supplierName: offer
-            ? (supplierNamesById.get(offer.supplier_organization_id) ?? "Поставщик")
-            : "Поставщик",
-          sellUnit: offer?.sell_unit_label ?? "Единица не указана",
-          quantity: item.quantity,
-        };
-      }),
-    };
-    setDraftCarts((current) => [cart, ...current]);
-    setMessage(
-      `Создана новая черновая корзина из списка «${list.name}». Она не является заказом и ничего не отправляет.`,
+  async function addListToNewDraftCart(list: ProcurementList) {
+    await runMutation(
+      () => createBuyerDraftCartFromList(client, organizationId, role, list.id),
+      `Черновая корзина из списка «${list.name}» сохранена. Заказ не создаётся и поставщику не отправляется.`,
     );
-    setActionError("");
+  }
+
+  async function saveDraftCartQuantity(itemId: string, quantityValue: string) {
+    await runMutation(
+      () =>
+        updateBuyerDraftCartItemQuantity(
+          client,
+          organizationId,
+          role,
+          itemId,
+          Number(quantityValue),
+        ),
+      "Количество в черновой корзине сохранено.",
+    );
+  }
+
+  async function removeDraftCartItem(itemId: string) {
+    await runMutation(
+      () => removeBuyerDraftCartItem(client, organizationId, role, itemId),
+      "Позиция удалена из черновой корзины.",
+    );
+  }
+
+  async function confirmDeleteDraftCart(cart: BuyerDraftCartWithItems) {
+    if (!window.confirm("Удалить черновую корзину и все её позиции?")) return;
+    await runMutation(
+      () => deleteBuyerDraftCart(client, organizationId, role, cart.id),
+      "Черновая корзина удалена.",
+    );
   }
 
   if (!canRead) return null;
@@ -353,7 +362,7 @@ export function BuyerProcurementListsPanel({
                         className="btn btn-primary"
                         type="button"
                         disabled={list.items.length === 0}
-                        onClick={() => addListToNewDraftCart(list)}
+                        onClick={() => void addListToNewDraftCart(list)}
                       >
                         Добавить список в новую черновую корзину
                       </button>
@@ -518,27 +527,121 @@ export function BuyerProcurementListsPanel({
         >
           <h3 id="draft-cart-preview-title">Новые черновые корзины</h3>
           <p className="small muted">
-            Это только несохранённые черновики в текущем рабочем просмотре. Заказы не
-            создаются и данные никуда не отправляются.
+            Корзины сохранены в этой организации. Они не являются заказами и не
+            отправляются поставщикам; цена и наличие не подтверждаются и требуют повторной
+            проверки.
           </p>
           {draftCarts.map((cart, index) => (
             <article className="draft-cart-card" key={cart.id}>
-              <h4>
-                Черновая корзина {draftCarts.length - index} · список «{cart.listName}»
-              </h4>
-              <ul className="list-simple">
-                {cart.lines.map((line) => (
-                  <li key={`${cart.id}-${line.id}`}>
-                    <div>
-                      <strong>{line.title}</strong>
-                      <div className="small muted">
-                        {line.supplierName} · {line.sellUnit} · количество:{" "}
-                        {line.quantity}
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <div className="procurement-list-heading">
+                <h4>
+                  Черновая корзина {draftCarts.length - index} · список «
+                  {cart.source_list_name}»
+                </h4>
+                {canManage ? (
+                  <button
+                    className="btn btn-ghost"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void confirmDeleteDraftCart(cart)}
+                  >
+                    Удалить черновик
+                  </button>
+                ) : null}
+              </div>
+              {cart.items.length === 0 ? (
+                <p className="empty">В черновой корзине пока нет позиций.</p>
+              ) : (
+                <ul className="list-simple procurement-list-items">
+                  {cart.items.map((item) => {
+                    const offer = offersById.get(item.catalog_offer_id);
+                    const quantityValue =
+                      quantityDrafts[item.id] ?? String(item.quantity);
+                    const offerChanged =
+                      offer !== undefined && offer.version !== item.catalog_offer_version;
+                    return (
+                      <li key={item.id}>
+                        <div className="procurement-list-item-main">
+                          <strong>
+                            {offer?.title ?? "Предложение сейчас недоступно"}
+                          </strong>
+                          <span className="small muted">
+                            {offer
+                              ? `${supplierNamesById.get(offer.supplier_organization_id) ?? "Поставщик"} · ${offer.sell_unit_label} · количество: ${item.quantity}`
+                              : `Связанное предложение недоступно · количество: ${item.quantity}`}
+                          </span>
+                          <span className="small muted">
+                            {!offer
+                              ? "Предложение нужно проверить заново перед дальнейшими действиями."
+                              : offerChanged
+                                ? "Условия предложения изменились после создания корзины; повторно проверьте цену и наличие."
+                                : "Цена и наличие не зафиксированы; перед будущим заказом условия нужно проверить заново."}
+                          </span>
+                        </div>
+                        <div className="procurement-list-item-controls">
+                          {canManage ? (
+                            <>
+                              <label
+                                className="field"
+                                htmlFor={`draft-cart-quantity-${item.id}`}
+                              >
+                                Количество в черновике (продаваемые единицы)
+                                <input
+                                  id={`draft-cart-quantity-${item.id}`}
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={1}
+                                  max={1_000_000}
+                                  step={1}
+                                  required
+                                  value={quantityValue}
+                                  onChange={(event) =>
+                                    setQuantityDrafts((current) => ({
+                                      ...current,
+                                      [item.id]: event.target.value,
+                                    }))
+                                  }
+                                />
+                              </label>
+                              <button
+                                className="btn"
+                                type="button"
+                                disabled={
+                                  busy ||
+                                  !Number.isInteger(Number(quantityValue)) ||
+                                  Number(quantityValue) <= 0 ||
+                                  Number(quantityValue) > 1_000_000 ||
+                                  Number(quantityValue) === item.quantity
+                                }
+                                onClick={() =>
+                                  void saveDraftCartQuantity(item.id, quantityValue)
+                                }
+                              >
+                                Сохранить количество в корзине
+                              </button>
+                              <button
+                                className="btn btn-ghost"
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void removeDraftCartItem(item.id)}
+                              >
+                                Удалить позицию
+                              </button>
+                            </>
+                          ) : (
+                            <p className="procurement-list-quantity-readonly">
+                              <span className="small muted">
+                                Количество (продаваемые единицы)
+                              </span>
+                              <strong>{item.quantity}</strong>
+                            </p>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </article>
           ))}
         </section>
