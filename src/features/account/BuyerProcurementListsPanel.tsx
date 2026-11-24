@@ -300,7 +300,12 @@ export function BuyerProcurementListsPanel({
       );
       setRefreshKey((value) => value + 1);
     } catch (error: unknown) {
-      setActionError(workspaceErrorMessage(error));
+      // Keep the same idempotency key and the current review visible so a safe
+      // replay is possible after an ambiguous response. Point to the per-supplier
+      // reasons instead of leaving only a generic error.
+      setActionError(
+        `${workspaceErrorMessage(error)} Причины по поставщикам указаны в карточках черновой корзины ниже.`,
+      );
     } finally {
       setBusy(false);
     }
@@ -864,12 +869,36 @@ function DraftCartReview({
   readonly onSubmit: () => void;
 }): ReactNode {
   if (!review) return null;
+  const blockedLineCount = review.supplierGroups.reduce(
+    (count, group) => count + group.lines.filter((line) => line.issues.length > 0).length,
+    0,
+  );
+  const readyLineCount = review.supplierGroups.reduce(
+    (count, group) =>
+      count + group.lines.filter((line) => line.issues.length === 0).length,
+    0,
+  );
+  // Line and location issues are already shown next to their own objects. Only
+  // the remaining top-level reasons (e.g. an empty or foreign cart) are listed
+  // here, so nothing is silently dropped and no reason is duplicated.
+  const shownIssues = new Set<string>([
+    ...review.locationIssues,
+    ...review.supplierGroups.flatMap((group) =>
+      group.lines.flatMap((line) => line.issues),
+    ),
+  ]);
+  const generalBlockers = review.blockers.filter((blocker) => !shownIssues.has(blocker));
   return (
     <section
       className="draft-cart-review"
       aria-labelledby={`draft-cart-review-${cartId}`}
     >
       <h5 id={`draft-cart-review-${cartId}`}>Проверка черновой корзины</h5>
+      {review.scopeMismatch ? (
+        <div className="notice notice-danger" role="alert">
+          Черновая корзина принадлежит другой организации и не может быть отправлена.
+        </div>
+      ) : null}
       {canManage ? (
         <label className="field" htmlFor={`draft-cart-location-${cartId}`}>
           Точка покупателя для этой корзины
@@ -902,6 +931,24 @@ function DraftCartReview({
           : "Есть блокирующие пункты: исправьте их или удалите проблемные позиции из черновика."}
       </p>
       <p className="small muted">{review.coverageWarning}</p>
+      <p className="small muted">
+        Готово позиций: {readyLineCount}; заблокировано: {blockedLineCount}.
+      </p>
+      {generalBlockers.length > 0 ? (
+        <div>
+          <p className="small" id={`draft-cart-blockers-${cartId}`}>
+            Общие блокирующие причины:
+          </p>
+          <ul
+            className="draft-cart-review-issues"
+            aria-labelledby={`draft-cart-blockers-${cartId}`}
+          >
+            {generalBlockers.map((blocker) => (
+              <li key={blocker}>{blocker}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {review.locationIssues.length > 0 ? (
         <ul className="draft-cart-review-issues" aria-label="Проблемы точки покупателя">
           {review.locationIssues.map((issue) => (
@@ -909,49 +956,64 @@ function DraftCartReview({
           ))}
         </ul>
       ) : null}
-      {review.supplierGroups.map((group) => (
-        <section className="draft-cart-review-group" key={group.key}>
-          <h6>Поставщик: {group.supplierName}</h6>
-          {group.subtotalMinor !== null && group.subtotalCurrency ? (
-            <p className="small">
-              Подытог по поставщику:{" "}
-              {formatCurrencyMinor(group.subtotalMinor, group.subtotalCurrency)}
-            </p>
-          ) : (
-            <p className="small muted">{group.subtotalNote}</p>
-          )}
-          <ul className="draft-cart-review-lines">
-            {group.lines.map((line) => (
-              <li key={line.itemId}>
-                <strong>
-                  {line.title} · {line.quantity}
-                  {line.sellUnitLabel ? ` ${line.sellUnitLabel}` : " ед."}
-                </strong>
-                <span className="small muted">
-                  Цена: {line.priceLabel ?? "не указана или не распознана"} ·{" "}
-                  {freshnessLabel(line.priceFreshness)}
-                </span>
-                <span className="small muted">
-                  Наличие: {line.availabilityLabel} ·{" "}
-                  {freshnessLabel(line.availabilityFreshness)}
-                </span>
-                {line.issues.length > 0 ? (
-                  <ul className="draft-cart-review-issues">
-                    {line.issues.map((issue) => (
-                      <li key={issue}>{issue}</li>
-                    ))}
-                  </ul>
-                ) : (
+      {review.supplierGroups.map((group) => {
+        const groupHeadingId = `draft-cart-group-${cartId}-${group.key.replace(
+          /[^a-zA-Z0-9_-]/g,
+          "-",
+        )}`;
+        const groupReady = group.lines.filter((line) => line.issues.length === 0).length;
+        const groupBlocked = group.lines.length - groupReady;
+        return (
+          <section
+            className="draft-cart-review-group"
+            key={group.key}
+            aria-labelledby={groupHeadingId}
+          >
+            <h6 id={groupHeadingId}>
+              Поставщик: {group.supplierName} · готово {groupReady}; заблокировано{" "}
+              {groupBlocked}
+            </h6>
+            {group.subtotalMinor !== null && group.subtotalCurrency ? (
+              <p className="small">
+                Подытог по поставщику:{" "}
+                {formatCurrencyMinor(group.subtotalMinor, group.subtotalCurrency)}
+              </p>
+            ) : (
+              <p className="small muted">{group.subtotalNote}</p>
+            )}
+            <ul className="draft-cart-review-lines">
+              {group.lines.map((line) => (
+                <li key={line.itemId}>
+                  <strong>
+                    {line.title} · {line.quantity}
+                    {line.sellUnitLabel ? ` ${line.sellUnitLabel}` : " ед."}
+                  </strong>
                   <span className="small muted">
-                    Блокирующих замечаний по доступным данным нет.
+                    Цена: {line.priceLabel ?? "не указана или не распознана"} ·{" "}
+                    {freshnessLabel(line.priceFreshness)}
                   </span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
-      {canManage ? (
+                  <span className="small muted">
+                    Наличие: {line.availabilityLabel} ·{" "}
+                    {freshnessLabel(line.availabilityFreshness)}
+                  </span>
+                  {line.issues.length > 0 ? (
+                    <ul className="draft-cart-review-issues">
+                      {line.issues.map((issue) => (
+                        <li key={issue}>{issue}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <span className="small muted">
+                      Блокирующих замечаний по доступным данным нет.
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+      {canManage && !review.scopeMismatch ? (
         <div className="submit-bar">
           <p className="small muted">
             При создании запроса сервер ещё раз проверит версии, цену, наличие, сроки
@@ -962,6 +1024,9 @@ function DraftCartReview({
             className="btn btn-primary"
             type="button"
             disabled={busy || !review.readyForCurrentChecks}
+            aria-describedby={
+              generalBlockers.length > 0 ? `draft-cart-blockers-${cartId}` : undefined
+            }
             onClick={onSubmit}
           >
             Создать запрос закупки

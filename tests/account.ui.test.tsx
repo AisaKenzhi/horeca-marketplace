@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { AccountConfigurationNotice } from "@/features/account/AccountWorkspace";
+import {
+  AccountConfigurationNotice,
+  AccountPasswordUpdate,
+} from "@/features/account/AccountWorkspace";
 import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
 import { App } from "@/app/App";
 import { AppProvider } from "@/app/store";
@@ -79,6 +82,51 @@ describe("authenticated account vertical", () => {
 
     expect(onUpdate).not.toHaveBeenCalled();
     expect(await screen.findByText(/трёхбуквенный код валюты/)).toBeInTheDocument();
+  });
+
+  it("saves a new password only through the explicit auth boundary", async () => {
+    const user = userEvent.setup();
+    const onUpdatePassword = vi.fn().mockResolvedValue(undefined);
+    const onDone = vi.fn();
+    render(<AccountPasswordUpdate onUpdatePassword={onUpdatePassword} onDone={onDone} />);
+
+    await user.type(
+      screen.getByLabelText("Новый пароль", { selector: "input" }),
+      "new-password-123",
+    );
+    await user.click(screen.getByRole("button", { name: "Сохранить новый пароль" }));
+
+    await waitFor(() =>
+      expect(onUpdatePassword).toHaveBeenCalledWith("new-password-123"),
+    );
+    expect(
+      screen.getByText("Пароль обновлён. Используйте его при следующем входе."),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Перейти в рабочее пространство" }),
+    );
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports an auth failure without exposing internal detail", async () => {
+    const user = userEvent.setup();
+    render(
+      <AccountPasswordUpdate
+        onUpdatePassword={vi.fn().mockRejectedValue(new Error("internal token detail"))}
+        onDone={vi.fn()}
+      />,
+    );
+
+    await user.type(
+      screen.getByLabelText("Новый пароль", { selector: "input" }),
+      "new-password-123",
+    );
+    await user.click(screen.getByRole("button", { name: "Сохранить новый пароль" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Не удалось выполнить запрос. Проверьте данные и попробуйте позже.",
+    );
+    expect(screen.queryByText("internal token detail")).not.toBeInTheDocument();
   });
 
   it("explains the explicit public-key configuration without exposing a service key", () => {

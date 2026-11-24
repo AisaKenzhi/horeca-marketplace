@@ -19,13 +19,17 @@ interface MockResponse {
 
 async function mockAuthEndpoint(
   page: Page,
-  respond: (pathname: string, requestBody: Record<string, unknown>) => MockResponse,
+  respond: (
+    pathname: string,
+    requestBody: Record<string, unknown>,
+    method: string,
+  ) => MockResponse,
 ): Promise<void> {
   await page.route(`${LOCAL_SUPABASE_URL}/auth/v1/**`, async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const requestBody = request.postDataJSON() as Record<string, unknown> | null;
-    const response = respond(pathname, requestBody ?? {});
+    const response = respond(pathname, requestBody ?? {}, request.method());
     await route.fulfill({
       status: response.status,
       contentType: "application/json",
@@ -161,4 +165,100 @@ test("sign-in failure is reported in safe, user-facing language", async ({ page 
   await expect(page.getByRole("heading", { name: "Рабочее пространство" })).toHaveCount(
     0,
   );
+});
+
+const mockUser = {
+  id: "00000000-0000-4000-8000-000000000002",
+  aud: "authenticated",
+  role: "authenticated",
+  email: "e2e.recovery@example.test",
+  app_metadata: { provider: "email", providers: ["email"] },
+  user_metadata: {},
+  identities: [],
+  email_confirmed_at: "2026-11-24T00:00:00.000Z",
+};
+
+function mockSession() {
+  return {
+    access_token: "mock-access-token",
+    token_type: "bearer",
+    expires_in: 3600,
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    refresh_token: "mock-refresh-token",
+    user: mockUser,
+  };
+}
+
+test("password recovery request never reveals whether an account exists", async ({
+  page,
+}) => {
+  test.skip(!usesLocalAuthMock, "Runs only with the local mocked Supabase build.");
+  let recoveryEmail: unknown = null;
+  await mockAuthEndpoint(page, (pathname, requestBody) => {
+    if (pathname.endsWith("/auth/v1/recover")) {
+      recoveryEmail = requestBody.email;
+      return { status: 200, body: {} };
+    }
+    return {
+      status: 401,
+      body: { code: "missing_authorization", message: "Missing authorization header" },
+    };
+  });
+
+  await page.goto("/account");
+  await page.getByRole("button", { name: "Забыли пароль?" }).click();
+  await expect(page.getByRole("button", { name: "Отправить ссылку" })).toBeVisible();
+  await page.getByLabel("Email").fill("unknown.account@example.test");
+  await page.getByRole("button", { name: "Отправить ссылку" }).click();
+
+  await expect(
+    page.getByText(
+      "Если адрес зарегистрирован, отправим ссылку для восстановления доступа. Мы не сообщаем, существует ли аккаунт.",
+    ),
+  ).toBeVisible();
+  expect(recoveryEmail).toBe("unknown.account@example.test");
+  await expect(page.getByRole("heading", { name: "Рабочее пространство" })).toHaveCount(
+    0,
+  );
+});
+
+test("signed-in buyer signs out through Supabase Auth", async ({ page }) => {
+  test.skip(!usesLocalAuthMock, "Runs only with the local mocked Supabase build.");
+  let loggedOut = false;
+  await mockAuthEndpoint(page, (pathname, _body, method) => {
+    if (pathname.endsWith("/auth/v1/token") && method === "POST") {
+      return { status: 200, body: mockSession() };
+    }
+    if (pathname.endsWith("/auth/v1/user") && method === "GET") {
+      return { status: 200, body: mockUser };
+    }
+    if (pathname.endsWith("/auth/v1/logout")) {
+      loggedOut = true;
+      return { status: 204, body: {} };
+    }
+    return {
+      status: 401,
+      body: { code: "missing_authorization", message: "Missing authorization header" },
+    };
+  });
+  await page.route(`${LOCAL_SUPABASE_URL}/rest/v1/**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "content-range": "0-0/0", "x-supabase-api-version": "2024-01-01" },
+      body: "[]",
+    });
+  });
+
+  await page.goto("/account");
+  await page.getByLabel("Email").fill(mockUser.email);
+  await page.getByLabel("Пароль").fill("test-password-123");
+  await page.getByRole("button", { name: "Войти" }).last().click();
+  await expect(page.getByRole("heading", { name: "Рабочее пространство" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Выйти" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Вход в HoReCa Marketplace" }),
+  ).toBeVisible();
+  expect(loggedOut).toBe(true);
 });
