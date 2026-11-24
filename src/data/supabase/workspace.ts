@@ -78,6 +78,7 @@ export type WorkspaceErrorCode =
   | "stale_preview"
   | "idempotency_conflict"
   | "already_submitted"
+  | "location_in_use"
   | "operation_failed";
 
 export function canManageSupplierCatalog(role: MembershipRole): boolean {
@@ -102,14 +103,17 @@ function errorCode(error: unknown): string | null {
 
 function mapError(error: unknown): WorkspaceError {
   const code = errorCode(error);
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+      ? error.message
+      : null;
+  if (code === "23514" && message === "buyer_location_in_use") {
+    return new WorkspaceError("location_in_use");
+  }
   if (code === "23505") return new WorkspaceError("duplicate");
   if (code === "42501") return new WorkspaceError("permission");
   if (code === "PGRST116" || code === "P0002") return new WorkspaceError("not_found");
   if (code === "P0001") {
-    const message =
-      typeof error === "object" && error !== null && "message" in error
-        ? error.message
-        : null;
     if (message === "idempotency key conflict") {
       return new WorkspaceError("idempotency_conflict");
     }
@@ -184,6 +188,8 @@ export function workspaceErrorMessage(error: unknown): string {
         return "Ключ повтора уже использован для другого содержимого. Обновите черновик и повторите действие.";
       case "already_submitted":
         return "Этот черновик уже использован для запроса и заморожен. Обновите список запросов.";
+      case "location_in_use":
+        return "Точку нельзя удалить: она используется сохранённой корзиной или запросом. Изменение названия и адреса не меняет снимок уже отправленного запроса.";
       case "unavailable":
         return "Не удалось связаться с рабочим контуром. Проверьте подключение и повторите попытку.";
       case "operation_failed":
@@ -507,6 +513,56 @@ export async function createBuyerLocation(
   return unwrap(data, error);
 }
 
+export async function updateBuyerLocation(
+  client: WorkspaceClient,
+  organizationId: string,
+  locationId: string,
+  input: BuyerLocationDraft,
+): Promise<BuyerLocationRow> {
+  if (validateBuyerLocation(input)) throw new WorkspaceError("invalid");
+  const { data, error } = await client
+    .from("buyer_locations")
+    .update({
+      name: input.name.trim(),
+      address: input.address.trim(),
+      delivery_zone: input.deliveryZone.trim() || null,
+    })
+    .eq("organization_id", organizationId)
+    .eq("id", locationId)
+    .select("id,organization_id,name,address,delivery_zone,created_at")
+    .single();
+  return unwrap(data, error);
+}
+
+/**
+ * Deleting a location is only safe when no saved cart or request references it:
+ * both foreign keys use ON DELETE RESTRICT. RLS and the tenant-scoped filters
+ * keep this inside the acting organisation; a concurrent attachment can still
+ * fail at the database boundary and is reported as a safe error.
+ */
+export async function deleteBuyerLocation(
+  client: WorkspaceClient,
+  organizationId: string,
+  locationId: string,
+): Promise<void> {
+  for (const table of ["buyer_draft_carts", "buyer_procurement_requests"] as const) {
+    const { data, error } = await client
+      .from(table)
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("buyer_location_id", locationId)
+      .limit(1);
+    if (error) throw mapError(error);
+    if (data && data.length > 0) throw new WorkspaceError("location_in_use");
+  }
+  const { error } = await client
+    .from("buyer_locations")
+    .delete()
+    .eq("organization_id", organizationId)
+    .eq("id", locationId);
+  if (error) throw mapError(error);
+}
+
 export async function createSupplierProfile(
   client: WorkspaceClient,
   organizationId: string,
@@ -519,6 +575,24 @@ export async function createSupplierProfile(
   const { data, error } = await client
     .from("supplier_profiles")
     .insert({ organization_id: organizationId, display_name: normalized })
+    .select("organization_id,display_name,verification_status,created_at")
+    .single();
+  return unwrap(data, error);
+}
+
+export async function updateSupplierProfileDisplayName(
+  client: WorkspaceClient,
+  organizationId: string,
+  displayName: string,
+): Promise<SupplierProfileRow> {
+  const normalized = displayName.trim();
+  if (normalized.length < 2 || normalized.length > 160) {
+    throw new WorkspaceError("invalid");
+  }
+  const { data, error } = await client
+    .from("supplier_profiles")
+    .update({ display_name: normalized })
+    .eq("organization_id", organizationId)
     .select("organization_id,display_name,verification_status,created_at")
     .single();
   return unwrap(data, error);
@@ -910,7 +984,7 @@ const BUYER_DRAFT_CART_COLUMNS =
 const BUYER_DRAFT_CART_ITEM_COLUMNS =
   "id,organization_id,cart_id,catalog_offer_id,quantity,catalog_offer_version,created_at,updated_at" as const;
 const BUYER_PROCUREMENT_REQUEST_COLUMNS =
-  "id,organization_id,draft_cart_id,buyer_location_id,seller_type,request_status,source_list_name,submitted_by,submitted_at" as const;
+  "id,organization_id,draft_cart_id,buyer_location_id,buyer_location_name,buyer_location_address,buyer_location_delivery_zone,seller_type,request_status,source_list_name,submitted_by,submitted_at" as const;
 const BUYER_PROCUREMENT_REQUEST_LINE_COLUMNS =
   "id,organization_id,request_id,catalog_offer_id,quantity,title,sell_unit_label,units_per_sell_unit,pack_amount,pack_base_unit,price_amount,currency,availability,catalog_offer_version,price_observed_at,availability_observed_at,created_at" as const;
 

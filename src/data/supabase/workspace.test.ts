@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
+  BuyerLocationRow,
   CatalogOfferRow,
   MembershipRole,
+  SupplierProfileRow,
   OrganizationType,
   VerificationStatus,
 } from "./database.types";
 import {
   canManageSupplierCatalog,
+  deleteBuyerLocation,
+  updateBuyerLocation,
   updateCatalogOfferTerms,
+  updateSupplierProfileDisplayName,
   WorkspaceError,
   type WorkspaceClient,
 } from "./workspace";
@@ -37,15 +42,35 @@ const updatedOffer: CatalogOfferRow = {
   updated_at: "2026-11-24T00:00:00.000Z",
 };
 
+const supplierProfileRow: SupplierProfileRow = {
+  organization_id: "supplier-1",
+  display_name: "Fresh supplier",
+  verification_status: "pending",
+  created_at: "2026-11-24T00:00:00.000Z",
+};
+
+const locationRow: BuyerLocationRow = {
+  id: "location-1",
+  organization_id: "buyer-1",
+  name: "Warsaw kitchen",
+  address: "Test address",
+  delivery_zone: "Warsaw",
+  created_at: "2026-11-24T00:00:00.000Z",
+};
+
 interface MockOptions {
   role?: MembershipRole | null;
   organizationType?: OrganizationType | null;
   verificationStatus?: VerificationStatus | null;
   updateData?: CatalogOfferRow | null;
   updateError?: { code: string } | null;
+  referenceRows?: readonly { id: string }[] | null;
+  deleteError?: { code: string } | null;
 }
 
 class QueryBuilder {
+  private deleted = false;
+
   constructor(
     private readonly table: string,
     private readonly options: MockOptions,
@@ -55,6 +80,25 @@ class QueryBuilder {
 
   select() {
     return this;
+  }
+
+  limit() {
+    return Promise.resolve({
+      data: this.options.referenceRows ?? [],
+      error: null,
+    });
+  }
+
+  delete() {
+    this.deleted = true;
+    return this;
+  }
+
+  then(resolve: (value: { data: null; error: unknown }) => unknown): unknown {
+    return Promise.resolve({
+      data: null,
+      error: this.deleted ? (this.options.deleteError ?? null) : null,
+    }).then(resolve);
   }
 
   eq(column: string, value: unknown) {
@@ -94,6 +138,12 @@ class QueryBuilder {
   }
 
   single() {
+    if (this.table === "supplier_profiles") {
+      return { data: supplierProfileRow, error: this.options.updateError ?? null };
+    }
+    if (this.table === "buyer_locations") {
+      return { data: locationRow, error: this.options.updateError ?? null };
+    }
     return {
       data:
         this.options.updateData === undefined ? updatedOffer : this.options.updateData,
@@ -473,5 +523,105 @@ describe("persistent supplier catalog import client boundary", () => {
     await expect(
       previewSupplierCatalogImport(client, "supplier-1", idempotencyKey, importPayload),
     ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "idempotency_conflict" });
+  });
+});
+
+describe("buyer location management", () => {
+  const draft = { name: "New kitchen", address: "New address", deliveryZone: "Warsaw" };
+
+  it("updates only editable columns, scoped to the acting organization", async () => {
+    const { client, updates, filters } = createClient();
+
+    await expect(
+      updateBuyerLocation(client, "buyer-1", "location-1", draft),
+    ).resolves.toEqual(locationRow);
+
+    expect(updates).toEqual([
+      {
+        table: "buyer_locations",
+        values: {
+          name: "New kitchen",
+          address: "New address",
+          delivery_zone: "Warsaw",
+        },
+      },
+    ]);
+    expect(filters).toContainEqual({
+      table: "buyer_locations",
+      column: "organization_id",
+      value: "buyer-1",
+    });
+    expect(filters).toContainEqual({
+      table: "buyer_locations",
+      column: "id",
+      value: "location-1",
+    });
+  });
+
+  it("rejects invalid location input before any write", async () => {
+    const { client, updates } = createClient();
+    await expect(
+      updateBuyerLocation(client, "buyer-1", "location-1", {
+        name: "",
+        address: "",
+        deliveryZone: "",
+      }),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "invalid" });
+    expect(updates).toEqual([]);
+  });
+
+  it("refuses to delete a location still used by a saved cart or request", async () => {
+    const { client, filters } = createClient({ referenceRows: [{ id: "cart-1" }] });
+
+    await expect(
+      deleteBuyerLocation(client, "buyer-1", "location-1"),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "location_in_use" });
+    expect(filters.some((filter) => filter.table === "buyer_draft_carts")).toBe(true);
+  });
+
+  it("deletes an unused location with tenant-scoped filters", async () => {
+    const { client, filters } = createClient({ referenceRows: [] });
+
+    await expect(
+      deleteBuyerLocation(client, "buyer-1", "location-1"),
+    ).resolves.toBeUndefined();
+
+    expect(filters).toContainEqual({
+      table: "buyer_locations",
+      column: "organization_id",
+      value: "buyer-1",
+    });
+    expect(filters).toContainEqual({
+      table: "buyer_locations",
+      column: "id",
+      value: "location-1",
+    });
+  });
+});
+
+describe("supplier profile display name", () => {
+  it("updates only the display name, scoped to the acting supplier tenant", async () => {
+    const { client, updates, filters } = createClient();
+
+    await expect(
+      updateSupplierProfileDisplayName(client, "supplier-1", "New name"),
+    ).resolves.toEqual(supplierProfileRow);
+
+    expect(updates).toEqual([
+      { table: "supplier_profiles", values: { display_name: "New name" } },
+    ]);
+    expect(filters).toContainEqual({
+      table: "supplier_profiles",
+      column: "organization_id",
+      value: "supplier-1",
+    });
+  });
+
+  it("rejects an empty or oversized name before any write", async () => {
+    const { client, updates } = createClient();
+    await expect(
+      updateSupplierProfileDisplayName(client, "supplier-1", "  "),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "invalid" });
+    expect(updates).toEqual([]);
   });
 });

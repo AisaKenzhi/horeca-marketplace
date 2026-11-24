@@ -620,9 +620,7 @@ export function BuyerProcurementListsPanel({
         ))}
       </div>
 
-      {requests.length > 0 ? (
-        <BuyerProcurementRequests requests={requests} locations={locations} />
-      ) : null}
+      {requests.length > 0 ? <BuyerProcurementRequests requests={requests} /> : null}
 
       {draftCarts.length > 0 ? (
         <section
@@ -780,10 +778,8 @@ export function BuyerProcurementListsPanel({
 
 function BuyerProcurementRequests({
   requests,
-  locations,
 }: {
   readonly requests: readonly BuyerProcurementRequestWithLines[];
-  readonly locations: readonly BuyerLocationRow[];
 }): ReactNode {
   return (
     <section className="buyer-request-list" aria-labelledby="buyer-request-list-title">
@@ -796,9 +792,6 @@ function BuyerProcurementRequests({
       </p>
       <div className="procurement-list-stack">
         {requests.map((request) => {
-          const location = locations.find(
-            (candidate) => candidate.id === request.buyer_location_id,
-          );
           return (
             <article className="buyer-request-card" key={request.id}>
               <div className="procurement-list-heading">
@@ -810,7 +803,16 @@ function BuyerProcurementRequests({
                 {request.source_list_name}»
               </p>
               <p className="small">
-                <strong>Точка покупателя:</strong> {location?.name ?? "сохранённая точка"}
+                <strong>Точка покупателя:</strong> {request.buyer_location_name}
+                <br />
+                <strong>Адрес на момент запроса:</strong> {request.buyer_location_address}
+                {request.buyer_location_delivery_zone ? (
+                  <>
+                    <br />
+                    <strong>Зона на момент запроса:</strong>{" "}
+                    {request.buyer_location_delivery_zone}
+                  </>
+                ) : null}
               </p>
               <p className="small muted">
                 Создан {new Date(request.submitted_at).toLocaleString("ru-RU")} · не

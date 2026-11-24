@@ -402,6 +402,9 @@ describe("BuyerProcurementListsPanel", () => {
       organization_id: organizationId,
       draft_cart_id: draftCart.id,
       buyer_location_id: location.id,
+      buyer_location_name: "Warsaw kitchen at submission",
+      buyer_location_address: "Original synthetic address",
+      buyer_location_delivery_zone: "Original zone",
       seller_type: "platform",
       request_status: "submitted",
       source_list_name: draftCart.source_list_name,
@@ -437,7 +440,14 @@ describe("BuyerProcurementListsPanel", () => {
       .mockResolvedValueOnce([])
       .mockResolvedValue([request]);
     vi.mocked(createBuyerProcurementRequest).mockResolvedValue(request.id);
-    renderPanel("buyer", readyOffers);
+    renderPanel("buyer", readyOffers, [
+      {
+        ...location,
+        name: "Renamed current kitchen",
+        address: "Updated current address",
+        delivery_zone: "Updated zone",
+      },
+    ]);
 
     const createButton = await screen.findByRole("button", {
       name: "Создать запрос закупки",
@@ -463,6 +473,14 @@ describe("BuyerProcurementListsPanel", () => {
     const sellerLabel = within(requestArticle).getByText(/Продавец:/).parentElement;
     if (!sellerLabel) throw new Error("Buyer request seller label was not rendered");
     expect(sellerLabel).toHaveTextContent("Платформа");
+    const locationSnapshot =
+      within(requestArticle).getByText(/Точка покупателя:/).parentElement;
+    if (!locationSnapshot)
+      throw new Error("Buyer request location snapshot was not rendered");
+    expect(locationSnapshot).toHaveTextContent("Warsaw kitchen at submission");
+    expect(locationSnapshot).toHaveTextContent("Original synthetic address");
+    expect(locationSnapshot).toHaveTextContent("Original zone");
+    expect(locationSnapshot).not.toHaveTextContent("Updated current address");
     expect(
       within(requestArticle).getByText(/Снимок цены при регистрации/),
     ).toBeInTheDocument();

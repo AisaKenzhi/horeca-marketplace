@@ -42,6 +42,8 @@ const ids = {
   cartItemA: randomUUID(),
   cartItemB: randomUUID(),
   idempotencyKey: randomUUID(),
+  workflowAcceptKey: randomUUID(),
+  workflowRejectKey: randomUUID(),
 };
 
 function connectionString(applicationName) {
@@ -238,9 +240,21 @@ ALTER TABLE public.buyer_procurement_requests DISABLE TRIGGER buyer_procurement_
 ALTER TABLE public.buyer_procurement_request_lines DISABLE TRIGGER buyer_procurement_request_lines_immutable;
 ALTER TABLE private.platform_supplier_suborders DISABLE TRIGGER platform_supplier_suborders_immutable;
 ALTER TABLE private.platform_supplier_suborder_lines DISABLE TRIGGER platform_supplier_suborder_lines_immutable;
+ALTER TABLE private.platform_supplier_suborder_workflows DISABLE TRIGGER platform_supplier_suborder_workflows_guard_update;
+ALTER TABLE private.platform_supplier_suborder_terms DISABLE TRIGGER platform_supplier_suborder_terms_immutable;
+ALTER TABLE private.platform_supplier_suborder_term_lines DISABLE TRIGGER platform_supplier_suborder_term_lines_immutable;
+ALTER TABLE private.platform_supplier_suborder_workflow_events DISABLE TRIGGER platform_supplier_suborder_workflow_events_immutable;
+ALTER TABLE private.platform_supplier_suborder_action_idempotency DISABLE TRIGGER platform_supplier_suborder_action_idempotency_immutable;
 ALTER TABLE public.buyer_draft_carts DISABLE TRIGGER buyer_draft_carts_guard_submission;
 ALTER TABLE public.buyer_draft_cart_items DISABLE TRIGGER buyer_draft_cart_items_guard_submission;
 
+-- Workflow-derived rows first: the append-only triggers are disabled only for
+-- this synthetic fixture cleanup, and the base request snapshots stay untouched.
+DELETE FROM private.platform_supplier_suborder_term_lines WHERE organization_id=${uuid(ids.buyerOrg)};
+DELETE FROM private.platform_supplier_suborder_workflow_events WHERE organization_id=${uuid(ids.buyerOrg)};
+DELETE FROM private.platform_supplier_suborder_action_idempotency WHERE actor_organization_id IN (${uuid(ids.buyerOrg)}, ${uuid(ids.supplierAOrg)}, ${uuid(ids.supplierBOrg)});
+DELETE FROM private.platform_supplier_suborder_terms WHERE organization_id=${uuid(ids.buyerOrg)};
+DELETE FROM private.platform_supplier_suborder_workflows WHERE organization_id=${uuid(ids.buyerOrg)};
 DELETE FROM private.platform_supplier_suborder_lines WHERE organization_id=${uuid(ids.buyerOrg)};
 DELETE FROM private.platform_supplier_suborders WHERE organization_id=${uuid(ids.buyerOrg)};
 DELETE FROM public.buyer_procurement_request_lines WHERE organization_id=${uuid(ids.buyerOrg)};
@@ -257,6 +271,11 @@ ALTER TABLE public.buyer_procurement_requests ENABLE TRIGGER buyer_procurement_r
 ALTER TABLE public.buyer_procurement_request_lines ENABLE TRIGGER buyer_procurement_request_lines_immutable;
 ALTER TABLE private.platform_supplier_suborders ENABLE TRIGGER platform_supplier_suborders_immutable;
 ALTER TABLE private.platform_supplier_suborder_lines ENABLE TRIGGER platform_supplier_suborder_lines_immutable;
+ALTER TABLE private.platform_supplier_suborder_workflows ENABLE TRIGGER platform_supplier_suborder_workflows_guard_update;
+ALTER TABLE private.platform_supplier_suborder_terms ENABLE TRIGGER platform_supplier_suborder_terms_immutable;
+ALTER TABLE private.platform_supplier_suborder_term_lines ENABLE TRIGGER platform_supplier_suborder_term_lines_immutable;
+ALTER TABLE private.platform_supplier_suborder_workflow_events ENABLE TRIGGER platform_supplier_suborder_workflow_events_immutable;
+ALTER TABLE private.platform_supplier_suborder_action_idempotency ENABLE TRIGGER platform_supplier_suborder_action_idempotency_immutable;
 ALTER TABLE public.buyer_draft_carts ENABLE TRIGGER buyer_draft_carts_guard_submission;
 ALTER TABLE public.buyer_draft_cart_items ENABLE TRIGGER buyer_draft_cart_items_guard_submission;
 COMMIT;
@@ -301,6 +320,86 @@ SELECT 'REQUEST_RESULT=' || public.create_buyer_procurement_request(
   '${ids.idempotencyKey}'::uuid
 )::text;
 COMMIT;
+`;
+}
+
+function supplierWorkflowActionSql(action, suborderId, idempotencyKey) {
+  const call =
+    action === "accept"
+      ? `public.accept_supplier_suborder('${ids.supplierAOrg}'::uuid, '${suborderId}'::uuid, 1, '${idempotencyKey}'::uuid)`
+      : `public.reject_supplier_suborder('${ids.supplierAOrg}'::uuid, '${suborderId}'::uuid, 'Synthetic concurrent rejection', 1, '${idempotencyKey}'::uuid)`;
+  return `
+BEGIN;
+SET LOCAL lock_timeout='30s';
+SET LOCAL statement_timeout='40s';
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','${ids.supplierAOwner}',false);
+DO $action$
+DECLARE v_receipt jsonb;
+BEGIN
+  BEGIN
+    v_receipt := ${call};
+    RAISE NOTICE 'ACTION_RESULT=success';
+  EXCEPTION WHEN SQLSTATE '40001' THEN
+    RAISE NOTICE 'ACTION_RESULT=40001';
+  END;
+END
+$action$;
+RESET ROLE;
+COMMIT;
+`;
+}
+
+function blockedWorkflowActionCountQuery() {
+  const actionNames = ["accept", "reject"]
+    .map((action) => `'${appPrefix}-workflow-${action}'`)
+    .join(",");
+  return `
+WITH RECURSIVE wait_chain(waiter_pid, blocker_pid) AS (
+  SELECT waiter.pid, blocker.pid
+  FROM pg_catalog.pg_stat_activity AS waiter
+  CROSS JOIN LATERAL pg_catalog.unnest(pg_catalog.pg_blocking_pids(waiter.pid)) AS blocker(pid)
+  WHERE waiter.datname=current_database()
+    AND waiter.application_name IN (${actionNames})
+    AND waiter.state='active'
+    AND (waiter.query LIKE '%public.accept_supplier_suborder%'
+      OR waiter.query LIKE '%public.reject_supplier_suborder%')
+  UNION
+  SELECT wait_chain.waiter_pid, blocker.pid
+  FROM wait_chain
+  CROSS JOIN LATERAL pg_catalog.unnest(pg_catalog.pg_blocking_pids(wait_chain.blocker_pid)) AS blocker(pid)
+)
+SELECT count(DISTINCT wait_chain.waiter_pid)::text
+FROM wait_chain
+JOIN pg_catalog.pg_stat_activity AS holder ON holder.pid=wait_chain.blocker_pid
+WHERE holder.datname=current_database()
+  AND holder.application_name='${appPrefix}-workflow-locker';
+`;
+}
+
+function workflowRaceStateQuery(suborderId) {
+  const suborder = `'${suborderId}'::uuid`;
+  return `
+SELECT jsonb_build_object(
+  'status', (SELECT status FROM private.platform_supplier_suborder_workflows WHERE supplier_suborder_id=${suborder}),
+  'workflow_version', (SELECT workflow_version FROM private.platform_supplier_suborder_workflows WHERE supplier_suborder_id=${suborder}),
+  'action_events', (
+    SELECT count(*)::integer FROM private.platform_supplier_suborder_workflow_events
+    WHERE supplier_suborder_id=${suborder}
+      AND event_type IN ('supplier_accepted','supplier_rejected')
+  ),
+  'action_receipts', (
+    SELECT count(*)::integer FROM private.platform_supplier_suborder_action_idempotency
+    WHERE supplier_suborder_id=${suborder}
+      AND operation IN ('supplier_accept','supplier_reject')
+  ),
+  'receipt_operations', (
+    SELECT jsonb_agg(operation ORDER BY operation)
+    FROM private.platform_supplier_suborder_action_idempotency
+    WHERE supplier_suborder_id=${suborder}
+      AND operation IN ('supplier_accept','supplier_reject')
+  )
+)::text;
 `;
 }
 
@@ -361,8 +460,10 @@ async function releaseLocker(session, command = "ROLLBACK;") {
 
 async function main() {
   let locker;
+  let workflowLocker;
   let fixtureCreated = false;
   const submitSessions = [];
+  const workflowActionSessions = [];
   try {
     await setupFixtures();
     fixtureCreated = true;
@@ -422,8 +523,87 @@ SELECT 'CART_LOCK_ACQUIRED';
       cart_frozen: true,
     });
 
+    const workflowSuborderId = queryDatabase(`
+SELECT id::text FROM private.platform_supplier_suborders
+WHERE buyer_request_id='${returnedIds[0]}'::uuid
+  AND supplier_organization_id='${ids.supplierAOrg}'::uuid
+LIMIT 1;
+`);
+    assert.match(workflowSuborderId, /^[0-9a-f-]{36}$/i);
+
+    workflowLocker = startPsql(`${appPrefix}-workflow-locker`);
+    workflowLocker.child.stdin.write(`
+BEGIN;
+SET LOCAL lock_timeout='30s';
+SELECT supplier_suborder_id
+FROM private.platform_supplier_suborder_workflows
+WHERE supplier_suborder_id='${workflowSuborderId}'::uuid
+FOR UPDATE;
+SELECT 'WORKFLOW_LOCK_ACQUIRED';
+`);
+    await waitUntil(
+      () => workflowLocker.stdout.includes("WORKFLOW_LOCK_ACQUIRED"),
+      "the explicit supplier workflow-row lock",
+    );
+
+    const competingActions = [
+      ["accept", ids.workflowAcceptKey],
+      ["reject", ids.workflowRejectKey],
+    ];
+    for (const [action, idempotencyKey] of competingActions) {
+      const session = startPsql(`${appPrefix}-workflow-${action}`);
+      workflowActionSessions.push(session);
+      session.child.stdin.end(
+        supplierWorkflowActionSql(action, workflowSuborderId, idempotencyKey),
+      );
+    }
+
+    await waitUntil(async () => {
+      const exited = workflowActionSessions.find(
+        (session) => session.child.exitCode !== null,
+      );
+      if (exited) {
+        throw new Error(
+          `A workflow action exited before the lock barrier: stdout=${exited.stdout.trim()} stderr=${exited.stderr.trim()}`,
+        );
+      }
+      return Number(queryDatabase(blockedWorkflowActionCountQuery())) === 2;
+    }, "both workflow actions to wait on the same held workflow row");
+
+    await releaseLocker(workflowLocker, "COMMIT;");
+    workflowLocker = undefined;
+    const actionResults = await Promise.all(
+      workflowActionSessions.map((session) => waitForCompletion(session)),
+    );
+    const actionOutcomes = actionResults.map(({ stdout, stderr }) => {
+      const match = `${stdout}\n${stderr}`.match(/ACTION_RESULT=(success|40001)/);
+      assert.ok(match, `workflow action emitted no result marker: ${stdout}\n${stderr}`);
+      return match[1];
+    });
+    assert.deepEqual(
+      actionOutcomes.sort(),
+      ["40001", "success"],
+      "exactly one version-1 supplier action must succeed and the other must fail with SQLSTATE 40001",
+    );
+
+    const workflowState = JSON.parse(
+      queryDatabase(workflowRaceStateQuery(workflowSuborderId)),
+    );
+    assert.ok(
+      ["supplier_accepted", "supplier_rejected"].includes(workflowState.status),
+      `unexpected final workflow status: ${workflowState.status}`,
+    );
+    assert.equal(workflowState.workflow_version, 2);
+    assert.equal(workflowState.action_events, 1);
+    assert.equal(workflowState.action_receipts, 1);
+    assert.deepEqual(workflowState.receipt_operations, [
+      workflowState.status === "supplier_accepted"
+        ? "supplier_accept"
+        : "supplier_reject",
+    ]);
+
     console.log(
-      "Local Postgres buyer-request concurrency smoke passed: both blocked submits returned one persisted request, with one exact set of buyer lines and supplier suborders.",
+      "Local Postgres concurrency smoke passed: concurrent buyer submits persisted one request; competing supplier accept/reject actions at expectedVersion 1 produced one success, one SQLSTATE 40001, workflow version 2, one audit event, and one receipt.",
     );
   } finally {
     if (locker) {
@@ -433,7 +613,18 @@ SELECT 'CART_LOCK_ACQUIRED';
         locker.child.kill("SIGTERM");
       }
     }
+    if (workflowLocker) {
+      try {
+        await releaseLocker(workflowLocker);
+      } catch {
+        workflowLocker.child.kill("SIGTERM");
+      }
+    }
     for (const session of submitSessions) {
+      if (session.child.exitCode === null) session.child.kill("SIGTERM");
+      await session.completion.catch(() => {});
+    }
+    for (const session of workflowActionSessions) {
       if (session.child.exitCode === null) session.child.kill("SIGTERM");
       await session.completion.catch(() => {});
     }

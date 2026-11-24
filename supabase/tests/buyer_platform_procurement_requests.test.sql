@@ -175,6 +175,33 @@ select is(
 );
 
 reset role;
+select is(
+  (select jsonb_build_object(
+    'name',buyer_location_name,
+    'address',buyer_location_address,
+    'delivery_zone',buyer_location_delivery_zone
+  ) from public.buyer_procurement_requests where id=current_setting('test.request_id')::uuid),
+  jsonb_build_object(
+    'name','Buyer kitchen','address','Synthetic address A','delivery_zone',null
+  ),
+  'request stores the selected buyer location as an immutable snapshot'
+);
+update public.buyer_locations
+   set name='Renamed buyer kitchen',
+       address='Synthetic address B',
+       delivery_zone='Updated zone'
+ where id='53000000-0000-4000-8000-000000000001';
+select is(
+  (select jsonb_build_object(
+    'name',buyer_location_name,
+    'address',buyer_location_address,
+    'delivery_zone',buyer_location_delivery_zone
+  ) from public.buyer_procurement_requests where id=current_setting('test.request_id')::uuid),
+  jsonb_build_object(
+    'name','Buyer kitchen','address','Synthetic address A','delivery_zone',null
+  ),
+  'editing a buyer location never changes an existing request address history'
+);
 select is((select count(*)::integer from public.buyer_procurement_requests where organization_id='23000000-0000-4000-8000-000000000001'),1,'idempotent replay leaves exactly one parent');
 select is((select count(*)::integer from private.platform_supplier_suborders where buyer_request_id=current_setting('test.request_id')::uuid),2,'internal suborders are grouped by the two supplier tenants');
 select is((select count(*)::integer from private.platform_supplier_suborder_lines where buyer_request_id=current_setting('test.request_id')::uuid),2,'each source line is linked to an internal supplier fulfillment line');

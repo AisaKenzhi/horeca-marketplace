@@ -124,6 +124,9 @@ export type BuyerProcurementRequestRow = {
   organization_id: string;
   draft_cart_id: string;
   buyer_location_id: string;
+  buyer_location_name: string;
+  buyer_location_address: string;
+  buyer_location_delivery_zone: string | null;
   seller_type: "platform";
   request_status: "submitted";
   source_list_name: string;
@@ -330,6 +333,86 @@ export type Database = {
       };
       apply_supplier_catalog_import: {
         Args: { p_organization_id: string; p_import_id: string };
+        Returns: Json;
+      };
+      list_supplier_suborders: {
+        Args: { p_supplier_organization_id: string };
+        Returns: {
+          supplier_suborder_id: string;
+          status: string;
+          workflow_version: number;
+          current_terms_version: number;
+          terms_reason: string | null;
+          response_deadline_at: string | null;
+          created_at: string;
+          updated_at: string;
+          lines: Json;
+        }[];
+      };
+      list_buyer_supplier_suborder_workflows: {
+        Args: { p_buyer_organization_id: string; p_buyer_request_id: string };
+        Returns: {
+          supplier_suborder_id: string;
+          status: string;
+          workflow_version: number;
+          current_terms_version: number;
+          terms_reason: string | null;
+          response_deadline_at: string | null;
+          created_at: string;
+          updated_at: string;
+          lines: Json;
+        }[];
+      };
+      accept_supplier_suborder: {
+        Args: {
+          p_supplier_organization_id: string;
+          p_supplier_suborder_id: string;
+          p_expected_version: number;
+          p_idempotency_key: string;
+        };
+        Returns: Json;
+      };
+      reject_supplier_suborder: {
+        Args: {
+          p_supplier_organization_id: string;
+          p_supplier_suborder_id: string;
+          p_reason: string;
+          p_expected_version: number;
+          p_idempotency_key: string;
+        };
+        Returns: Json;
+      };
+      propose_supplier_suborder_version: {
+        Args: {
+          p_supplier_organization_id: string;
+          p_supplier_suborder_id: string;
+          p_reason: string;
+          p_response_deadline_at: string;
+          p_lines: Json;
+          p_expected_version: number;
+          p_idempotency_key: string;
+        };
+        Returns: Json;
+      };
+      accept_buyer_supplier_suborder_version: {
+        Args: {
+          p_buyer_organization_id: string;
+          p_supplier_suborder_id: string;
+          p_terms_version: number;
+          p_expected_version: number;
+          p_idempotency_key: string;
+        };
+        Returns: Json;
+      };
+      reject_buyer_supplier_suborder_version: {
+        Args: {
+          p_buyer_organization_id: string;
+          p_supplier_suborder_id: string;
+          p_terms_version: number;
+          p_reason: string;
+          p_expected_version: number;
+          p_idempotency_key: string;
+        };
         Returns: Json;
       };
     };
