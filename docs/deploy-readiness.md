@@ -8,6 +8,13 @@
 > [tenant foundation](tenant-foundation.md)). Its existence and tests do not
 > mean the branch was deployed or change what this RC snapshot records.
 
+**Addendum (current HEAD `467dcb4`):** the gates below describe only the
+`da8f42a` static-demo snapshot. Current HEAD adds an opt-in **local** Supabase
+slice (RLS, grants, RPC, six pgTAP suites, local CI). G4/G6/G7/G13 must therefore
+be read as "demo build" vs "local Supabase only"; no hosted database, staging
+environment or production deployment exists, and the **NO-GO** conclusion is
+unchanged. Evidence level: **local**.
+
 This is the honest status at that snapshot commit of what could be deployed and
 what could **not**. It separates three levels the project uses everywhere:
 **local** (that repo state, synthetic data), **staging** (does not exist yet),

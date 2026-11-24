@@ -5,7 +5,9 @@ or a reversible choice, not a final business decision.
 
 ## ADR-0001 — Client-only prototype, no backend, no database
 
-**Status:** Accepted for P0.
+**Status:** Accepted for P0. Applies to the synthetic demo path only; the
+current branch additionally has an opt-in, local-only Supabase slice (see the
+update to ADR-0012 below). No hosted backend was adopted.
 
 **Context.** The brief asks for a private, local P0 prototype on synthetic data
 with no production integrations, no real orders, payments or messages, and no
@@ -21,7 +23,7 @@ tests, seed data and Playwright runs all execute locally.
 - Zero risk of touching real data or services.
 - No server-side authorization today; the domain policy functions are the
   enforcement point and are unit-tested for cross-tenant leakage.
-- When a real backend is added (see ADR-0002), every repository method must move
+- When a real backend is added (see ADR-0012), every repository method must move
   behind a tenant-checked server boundary.
 
 ## ADR-0002 — Domain rules live in pure, tested modules
@@ -216,7 +218,7 @@ org; a foreign location is still rejected.
 
 ## ADR-0012 — Backend path: keep the boundary, defer the provider
 
-**Status:** Open / proposed. Not implemented.
+**Status:** Partially implemented locally; still open for hosted/staging/production.
 
 **Context.** The product needs real server-side authentication and authorization,
 durable storage and row-level security before any public launch (see the launch
@@ -237,14 +239,20 @@ When a backend is chosen, the lowest-risk path is a single relational database
 - the same optimistic `version` columns the repository already uses;
 - the domain functions in `src/domain/**` reused server-side, not re-implemented.
 
-This ADR stays **proposed** until a dedicated non-production environment and
-explicit permission exist. No provider is selected; `@supabase/supabase-js` is
-present but unused, and is not evidence of a backend.
+A **local-only** implementation of this direction now exists: Supabase
+migrations with deny-by-default RLS, membership-derived policies, grants and RPC,
+six local pgTAP suites, and a local PostgREST/concurrency smoke in CI. It runs
+only against a local stack configured via env vars. This ADR stays **open** for a
+hosted provider, staging or production until a dedicated non-production
+environment and explicit permission exist. No hosted provider, credentials or
+production data are used. `@supabase/supabase-js` in local mode is evidence of a
+**local** slice, not of a launchable backend.
 
 **Consequences.**
 
-- The client rules remain the only enforcement today and are explicitly not a
-  security boundary once data leaves the browser.
+- On the demo path the client rules remain the only enforcement; on the account
+  path RLS/grants/RPC are the boundary. Neither is a security boundary once real
+  data or a hosted service is introduced.
 - A future server must reproduce every check currently unit-tested in the
   repository, plus RLS tests per role/tenant.
 

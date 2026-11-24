@@ -6,9 +6,17 @@ HoReCa marketplace prototype. Read it before changing code.
 ## What this repository is
 
 A **private, local P0 prototype** of a B2B HoReCa procurement marketplace for
-Kazakhstan. It is a client-only React + TypeScript SPA that keeps all state in
-memory (optionally browser storage). There is **no backend, no database, no
-network calls, and no real data**. Every value is clearly synthetic demo data.
+Kazakhstan. It has two deliberately distinct surfaces:
+
+1. The **default demo path** is a client-only React + TypeScript SPA that keeps
+   all state in memory (optionally browser storage). It has **no backend, no
+   database and no network calls**. All demo values are synthetic.
+2. An **opt-in, local-only** Supabase account workspace exists alongside it
+   (`/account`, `src/data/supabase/`, `supabase/migrations/`, `supabase/tests/`).
+   It runs **only** when local Supabase environment variables are configured
+   against a local stack. It stores only the user's own workspace/account
+   records locally. **No hosted project, staging or production database has
+   been linked or migrated.**
 
 It is **not** a live marketplace. It does not create real orders, payments,
 refunds, deliveries, reservations, or messages, and it does not contact any
@@ -44,15 +52,23 @@ and record the assumption in `docs/`.
 - `src/domain/` — pure domain rules (money, packaging, freshness, cart,
   revisions, order lifecycle, authorization, catalog import, reorder, errors).
   No I/O, no React.
-- `src/data/` — the in-browser `Repository` (the single mutation point) plus
-  synthetic `seed.ts`. This is the "server boundary" for the prototype: every
-  permission check lives here, not only in the UI.
+- `src/data/` — the in-browser `Repository` (the single mutation point for the
+  demo path) plus synthetic `seed.ts`. This is the "server boundary" for the
+  prototype: every permission check lives here, not only in the UI.
+- `src/data/supabase/` — opt-in, local-only account workspace adapter
+  (`client.ts`, `validation.ts`, `workspace.ts`, `database.types.ts`). With
+  `supabase/migrations/` (RLS, grants, RPC) and `supabase/tests/` (pgTAP), this
+  is the boundary for the account path. It is not active on the demo path.
 - `src/features/` — screens. The UI is **not** a security boundary. Never rely
-  on hiding a button; re-check in the repository.
+  on hiding a button; re-check in the repository (demo path) or in RLS/grants/
+  RPC (account path).
 - `src/components/`, `src/app/` — shared UI, store, i18n.
 
-Do not rewrite the app from scratch, and do not add a backend or a database
-without a documented, product-justified reason.
+Do not rewrite the app from scratch. Do not add or expand a backend/database
+surface, link a hosted project, or perform external/production operations
+without a documented, product-justified reason **and explicit permission**. The
+existing local Supabase slice is a documented local-only exception; it does not
+authorise staging or production use.
 
 ## Rules that must stay true in code
 
@@ -66,7 +82,9 @@ without a documented, product-justified reason.
   an exact coefficient.
 - **Tenant isolation**: buyer orgs see only their own data; suppliers see only
   their own branch; a foreign id (URL or query) must return a safe
-  not-found/forbidden, never a foreign object.
+  not-found/forbidden, never a foreign object. On the account path the same rule
+  is enforced by RLS, revoked grants and object checks in the request RPC —
+  never by client-side filters alone.
 - **Locations**: scope by the acting membership's org. Never infer the org from
   "the first location". A supplier's delivery zone must cover the selected
   location or the group is held back with an exact reason.
@@ -92,22 +110,25 @@ without a documented, product-justified reason.
 Run the full local gate:
 
 ```bash
-npm run verify      # prettier check is separate: npm run format
+npm run verify:full # format → lint → typecheck → coverage → build
+npm run verify      # lint → typecheck → unit tests → build
 npm run format      # format check
 npm run e2e         # Playwright, desktop + mobile, against local preview
+npm run e2e:ci      # local mock Supabase build + Playwright (what CI runs)
+npx supabase db reset && npx supabase test db   # local pgTAP (needs Docker)
 ```
 
-`npm run verify` = lint → typecheck → unit tests → build. All must be green.
-Playwright runs against the local preview server only, never a public host.
-The E2E suite includes an automated accessibility gate
+All gates must be green. Playwright runs against the local preview server only,
+never a public host. The E2E suite includes an automated accessibility gate
 (`e2e/accessibility.spec.ts`) that asserts every reachable screen is free of
 detectable WCAG 2.1 A/AA violations (axe-core). It does **not** replace a manual
-screen-reader/keyboard pass.
+screen-reader/keyboard pass. `.github/workflows/supabase-db.yml` also runs local
+PostgREST/concurrency smoke scripts against an ephemeral local Postgres.
 
 ## Honesty about what tests prove
 
-Local unit/component/E2E tests on synthetic data prove the **local**
-implementation. They do **not** prove real demand, legal validity, food safety,
-payment viability, or that any external service works. Never claim otherwise.
-State clearly which of the three levels (local / staging / production) a result
-belongs to.
+Local unit/component/E2E and local Supabase/pgTAP tests on synthetic data prove
+the **local** implementation. They do **not** prove real demand, legal validity,
+food safety, payment viability, or that any hosted/external service works. Never
+claim otherwise. State clearly which of the three levels (local / staging /
+production) a result belongs to; pgTAP passing locally is a **local** result.
