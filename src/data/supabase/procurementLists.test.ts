@@ -17,6 +17,7 @@ import {
   removeBuyerDraftCartItem,
   removeBuyerProcurementListItem,
   renameBuyerProcurementList,
+  updateBuyerDraftCartLocation,
   updateBuyerDraftCartItemQuantity,
   updateBuyerProcurementListItemQuantity,
   WorkspaceError,
@@ -115,6 +116,7 @@ describe("buyer procurement list access", () => {
     const cart: BuyerDraftCartRow = {
       id: "cart-a",
       organization_id: "org-a",
+      buyer_location_id: null,
       source_list_name: "Pantry",
       created_by: "user-a",
       created_at: "2026-11-24T00:00:00.000Z",
@@ -153,6 +155,33 @@ describe("buyer procurement list access", () => {
       p_organization_id: "org-a",
       p_source_list_id: "list-a",
     });
+  });
+
+  it("updates only the selected location on a draft cart scoped to its organization and id", async () => {
+    const updatedCart: BuyerDraftCartRow = {
+      id: "cart-a",
+      organization_id: "org-a",
+      buyer_location_id: "location-a",
+      source_list_name: "Pantry",
+      created_by: "user-a",
+      created_at: "2026-11-24T00:00:00.000Z",
+    };
+    const { client, calls } = mockClient(updatedCart);
+
+    await expect(
+      updateBuyerDraftCartLocation(client, "org-a", "buyer", "cart-a", "location-a"),
+    ).resolves.toEqual(updatedCart);
+    expect(calls).toEqual([
+      {
+        table: "buyer_draft_carts",
+        action: "update",
+        values: { buyer_location_id: "location-a" },
+        filters: [
+          ["organization_id", "org-a"],
+          ["id", "cart-a"],
+        ],
+      },
+    ]);
   });
 
   it("normalizes names and scopes every mutation to the tenant and resource", async () => {
@@ -209,6 +238,9 @@ describe("buyer procurement list access", () => {
       await expect(
         updateBuyerDraftCartItemQuantity(client, "org-a", role, "item-a", 2),
       ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "permission" });
+      await expect(
+        updateBuyerDraftCartLocation(client, "org-a", role, "cart-a", "location-a"),
+      ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "permission" });
       expect(from).not.toHaveBeenCalled();
     }
     const { client, from } = mockClient();
@@ -226,6 +258,17 @@ describe("buyer procurement list access", () => {
       ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "invalid" });
       expect(from).not.toHaveBeenCalled();
     }
+    const emptyLocation = mockClient();
+    await expect(
+      updateBuyerDraftCartLocation(
+        emptyLocation.client,
+        "org-a",
+        "buyer",
+        "cart-a",
+        "  ",
+      ),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "invalid" });
+    expect(emptyLocation.from).not.toHaveBeenCalled();
     for (const quantity of [
       0,
       -1,

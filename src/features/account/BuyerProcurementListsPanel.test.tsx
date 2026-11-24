@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   BuyerDraftCartItemRow,
   BuyerDraftCartRow,
+  BuyerLocationRow,
   BuyerProcurementListItemRow,
   BuyerProcurementListRow,
   CatalogOfferRow,
@@ -24,6 +25,7 @@ import {
   removeBuyerDraftCartItem,
   removeBuyerProcurementListItem,
   renameBuyerProcurementList,
+  updateBuyerDraftCartLocation,
   updateBuyerDraftCartItemQuantity,
   updateBuyerProcurementListItemQuantity,
 } from "@/data/supabase/workspace";
@@ -44,6 +46,7 @@ vi.mock("@/data/supabase/workspace", () => ({
   removeBuyerDraftCartItem: vi.fn(),
   removeBuyerProcurementListItem: vi.fn(),
   renameBuyerProcurementList: vi.fn(),
+  updateBuyerDraftCartLocation: vi.fn(),
   updateBuyerDraftCartItemQuantity: vi.fn(),
   updateBuyerProcurementListItemQuantity: vi.fn(),
   workspaceErrorMessage: () => "Не удалось выполнить запрос.",
@@ -54,6 +57,14 @@ const listId = "list-1";
 const itemId = "item-1";
 const offerId = "offer-1";
 const now = "2026-11-24T00:00:00.000Z";
+const location: BuyerLocationRow = {
+  id: "buyer-location-1",
+  organization_id: organizationId,
+  name: "Warsaw kitchen",
+  address: "Test address",
+  delivery_zone: "Warsaw",
+  created_at: now,
+};
 
 const listItem: BuyerProcurementListItemRow = {
   id: itemId,
@@ -89,11 +100,13 @@ const draftCartItem: BuyerDraftCartItemRow = {
 const draftCart: BuyerDraftCartRow & { items: BuyerDraftCartItemRow[] } = {
   id: "draft-cart-1",
   organization_id: organizationId,
+  buyer_location_id: null,
   source_list_name: "Weekly order",
   created_by: "user-1",
   created_at: now,
   items: [draftCartItem],
 };
+const draftCartWithLocation = { ...draftCart, buyer_location_id: location.id };
 
 const offers: CatalogOfferRow[] = [
   {
@@ -157,12 +170,14 @@ const client = {} as WorkspaceClient;
 function renderPanel(
   role: MembershipRole = "buyer",
   offerRows: readonly CatalogOfferRow[] = offers,
+  locationRows: readonly BuyerLocationRow[] = [location],
 ) {
   return render(
     <BuyerProcurementListsPanel
       client={client}
       organizationId={organizationId}
       role={role}
+      locations={locationRows}
       offers={offerRows}
       supplierProfiles={supplierProfiles}
     />,
@@ -180,6 +195,7 @@ beforeEach(() => {
   vi.mocked(deleteBuyerProcurementList).mockResolvedValue();
   vi.mocked(addBuyerProcurementListItem).mockResolvedValue(listItem);
   vi.mocked(removeBuyerDraftCartItem).mockResolvedValue();
+  vi.mocked(updateBuyerDraftCartLocation).mockResolvedValue(draftCart);
   vi.mocked(updateBuyerProcurementListItemQuantity).mockResolvedValue(listItem);
   vi.mocked(updateBuyerDraftCartItemQuantity).mockResolvedValue(draftCartItem);
   vi.mocked(removeBuyerProcurementListItem).mockResolvedValue();
@@ -311,6 +327,66 @@ describe("BuyerProcurementListsPanel", () => {
       draftCartItem.id,
       5,
     );
+  });
+
+  it("saves an organization-owned delivery point and reports when available checks pass", async () => {
+    const user = userEvent.setup();
+    const currentOffers = offers.map((offer) =>
+      offer.id === offerId
+        ? {
+            ...offer,
+            price_amount: 12.5,
+            currency: "KZT",
+            moq: 2,
+            order_step: 1,
+            availability: "in_stock" as const,
+            price_valid_until: "2026-11-25T00:00:00.000Z",
+          }
+        : offer,
+    );
+    vi.mocked(loadBuyerDraftCarts)
+      .mockResolvedValueOnce([draftCart])
+      .mockResolvedValue([draftCartWithLocation]);
+    vi.mocked(updateBuyerDraftCartLocation).mockResolvedValue(draftCartWithLocation);
+    renderPanel("buyer", currentOffers);
+
+    await screen.findByText("Выберите точку покупателя для этой черновой корзины.");
+    await user.selectOptions(
+      screen.getByLabelText("Точка покупателя для этой корзины"),
+      location.id,
+    );
+
+    expect(updateBuyerDraftCartLocation).toHaveBeenCalledWith(
+      client,
+      organizationId,
+      "buyer",
+      draftCart.id,
+      location.id,
+    );
+    await screen.findByText(/Проверки по доступным данным пройдены/);
+    expect(screen.getByText(/покрытие и доставка не подтверждены/)).toBeInTheDocument();
+    expect(screen.getByText(/заказ не создан/)).toBeInTheDocument();
+  });
+
+  it("lets a buyer remove a blocked draft-cart line without creating an order", async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadBuyerDraftCarts).mockResolvedValue([draftCart]);
+    renderPanel();
+    const cartHeading = await screen.findByRole("heading", {
+      name: /Черновая корзина 1/,
+    });
+    const cartCard = cartHeading.closest("article");
+    if (!cartCard) throw new Error("Draft cart card was not rendered");
+
+    await user.click(within(cartCard).getByRole("button", { name: "Удалить позицию" }));
+
+    expect(removeBuyerDraftCartItem).toHaveBeenCalledWith(
+      client,
+      organizationId,
+      "buyer",
+      draftCartItem.id,
+    );
+    expect(createBuyerDraftCartFromList).not.toHaveBeenCalled();
   });
 
   it("warns when a catalog offer changed after the draft cart was created", async () => {

@@ -506,6 +506,7 @@ function AccountWorkspaceReady({
               client={client}
               organizationId={activeOrganization.id}
               role={activeOrganization.role}
+              locations={activeLocations}
               offers={snapshot.catalog}
               supplierProfiles={snapshot.supplierProfiles}
             />

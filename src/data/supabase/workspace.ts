@@ -671,7 +671,7 @@ export type BuyerDraftCartWithItems = BuyerDraftCartRow & {
 };
 
 const BUYER_DRAFT_CART_COLUMNS =
-  "id,organization_id,source_list_name,created_by,created_at" as const;
+  "id,organization_id,buyer_location_id,source_list_name,created_by,created_at" as const;
 const BUYER_DRAFT_CART_ITEM_COLUMNS =
   "id,organization_id,cart_id,catalog_offer_id,quantity,catalog_offer_version,created_at,updated_at" as const;
 
@@ -712,6 +712,27 @@ export async function createBuyerDraftCartFromList(
     p_organization_id: organizationId,
     p_source_list_id: sourceListId,
   });
+  return unwrap(data, error);
+}
+
+export async function updateBuyerDraftCartLocation(
+  client: WorkspaceClient,
+  organizationId: string,
+  role: MembershipRole,
+  cartId: string,
+  buyerLocationId: string | null,
+): Promise<BuyerDraftCart> {
+  assertProcurementListAccess(role, true);
+  if (buyerLocationId !== null && !buyerLocationId.trim()) {
+    throw new WorkspaceError("invalid");
+  }
+  const { data, error } = await client
+    .from("buyer_draft_carts")
+    .update({ buyer_location_id: buyerLocationId })
+    .eq("organization_id", organizationId)
+    .eq("id", cartId)
+    .select(BUYER_DRAFT_CART_COLUMNS)
+    .single();
   return unwrap(data, error);
 }
 

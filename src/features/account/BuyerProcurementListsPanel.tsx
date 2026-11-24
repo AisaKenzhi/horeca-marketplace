@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import type {
+  BuyerLocationRow,
   CatalogOfferRow,
   MembershipRole,
   SupplierProfileRow,
 } from "@/data/supabase/database.types";
+import {
+  formatCurrencyMinor,
+  reviewDraftCart,
+  type DraftCartReadinessReview,
+} from "@/domain/draftCartReadiness";
 import {
   addBuyerProcurementListItem,
   canManageBuyerProcurement,
@@ -17,6 +23,7 @@ import {
   removeBuyerDraftCartItem,
   removeBuyerProcurementListItem,
   renameBuyerProcurementList,
+  updateBuyerDraftCartLocation,
   updateBuyerDraftCartItemQuantity,
   updateBuyerProcurementListItemQuantity,
   workspaceErrorMessage,
@@ -28,6 +35,7 @@ interface Props {
   readonly client: WorkspaceClient;
   readonly organizationId: string;
   readonly role: MembershipRole;
+  readonly locations: readonly BuyerLocationRow[];
   readonly offers: readonly CatalogOfferRow[];
   readonly supplierProfiles: readonly SupplierProfileRow[];
 }
@@ -38,6 +46,7 @@ export function BuyerProcurementListsPanel({
   client,
   organizationId,
   role,
+  locations,
   offers,
   supplierProfiles,
 }: Props): ReactNode {
@@ -71,6 +80,23 @@ export function BuyerProcurementListsPanel({
         ]),
       ),
     [supplierProfiles],
+  );
+  const draftCartReviewsById = useMemo(
+    () =>
+      new Map(
+        draftCarts.map((cart) => [
+          cart.id,
+          reviewDraftCart({
+            organizationId,
+            cart,
+            locations,
+            offers,
+            suppliers: supplierProfiles,
+            nowIso: new Date().toISOString(),
+          }),
+        ]),
+      ),
+    [draftCarts, locations, offers, organizationId, supplierProfiles],
   );
 
   useEffect(() => {
@@ -208,6 +234,20 @@ export function BuyerProcurementListsPanel({
           Number(quantityValue),
         ),
       "Количество в черновой корзине сохранено.",
+    );
+  }
+
+  async function saveDraftCartLocation(cartId: string, locationId: string) {
+    await runMutation(
+      () =>
+        updateBuyerDraftCartLocation(
+          client,
+          organizationId,
+          role,
+          cartId,
+          locationId || null,
+        ),
+      "Точка покупателя сохранена в черновой корзине.",
     );
   }
 
@@ -549,6 +589,17 @@ export function BuyerProcurementListsPanel({
                   </button>
                 ) : null}
               </div>
+              <DraftCartReview
+                cartId={cart.id}
+                locationId={cart.buyer_location_id}
+                locations={locations}
+                review={draftCartReviewsById.get(cart.id) ?? null}
+                canManage={canManage}
+                busy={busy}
+                onLocationChange={(locationId) =>
+                  void saveDraftCartLocation(cart.id, locationId)
+                }
+              />
               {cart.items.length === 0 ? (
                 <p className="empty">В черновой корзине пока нет позиций.</p>
               ) : (
@@ -648,4 +699,126 @@ export function BuyerProcurementListsPanel({
       ) : null}
     </section>
   );
+}
+
+function DraftCartReview({
+  cartId,
+  locationId,
+  locations,
+  review,
+  canManage,
+  busy,
+  onLocationChange,
+}: {
+  readonly cartId: string;
+  readonly locationId: string | null;
+  readonly locations: readonly BuyerLocationRow[];
+  readonly review: DraftCartReadinessReview | null;
+  readonly canManage: boolean;
+  readonly busy: boolean;
+  readonly onLocationChange: (locationId: string) => void;
+}): ReactNode {
+  if (!review) return null;
+  return (
+    <section
+      className="draft-cart-review"
+      aria-labelledby={`draft-cart-review-${cartId}`}
+    >
+      <h5 id={`draft-cart-review-${cartId}`}>Проверка черновой корзины</h5>
+      {canManage ? (
+        <label className="field" htmlFor={`draft-cart-location-${cartId}`}>
+          Точка покупателя для этой корзины
+          <select
+            id={`draft-cart-location-${cartId}`}
+            value={locationId ?? ""}
+            disabled={busy || locations.length === 0}
+            onChange={(event) => onLocationChange(event.target.value)}
+          >
+            <option value="">Выберите сохранённую точку</option>
+            {locations.map((location) => (
+              <option key={location.id} value={location.id}>
+                {location.name}
+                {location.delivery_zone ? ` · ${location.delivery_zone}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <p className="small">
+          Точка покупателя: <strong>{review.locationName ?? "не выбрана"}</strong>
+        </p>
+      )}
+      <p
+        className={`notice ${review.readyForCurrentChecks ? "notice-info" : "notice-warn"}`}
+        role={review.readyForCurrentChecks ? "status" : "alert"}
+      >
+        {review.readyForCurrentChecks
+          ? "Проверки по доступным данным пройдены. Это по-прежнему черновик, заказ не создан."
+          : "Есть блокирующие пункты: исправьте их или удалите проблемные позиции из черновика."}
+      </p>
+      <p className="small muted">{review.coverageWarning}</p>
+      {review.locationIssues.length > 0 ? (
+        <ul className="draft-cart-review-issues" aria-label="Проблемы точки покупателя">
+          {review.locationIssues.map((issue) => (
+            <li key={issue}>{issue}</li>
+          ))}
+        </ul>
+      ) : null}
+      {review.supplierGroups.map((group) => (
+        <section className="draft-cart-review-group" key={group.key}>
+          <h6>Поставщик: {group.supplierName}</h6>
+          {group.subtotalMinor !== null && group.subtotalCurrency ? (
+            <p className="small">
+              Подытог по поставщику:{" "}
+              {formatCurrencyMinor(group.subtotalMinor, group.subtotalCurrency)}
+            </p>
+          ) : (
+            <p className="small muted">{group.subtotalNote}</p>
+          )}
+          <ul className="draft-cart-review-lines">
+            {group.lines.map((line) => (
+              <li key={line.itemId}>
+                <strong>
+                  {line.title} · {line.quantity}
+                  {line.sellUnitLabel ? ` ${line.sellUnitLabel}` : " ед."}
+                </strong>
+                <span className="small muted">
+                  Цена: {line.priceLabel ?? "не указана или не распознана"} ·{" "}
+                  {freshnessLabel(line.priceFreshness)}
+                </span>
+                <span className="small muted">
+                  Наличие: {line.availabilityLabel} ·{" "}
+                  {freshnessLabel(line.availabilityFreshness)}
+                </span>
+                {line.issues.length > 0 ? (
+                  <ul className="draft-cart-review-issues">
+                    {line.issues.map((issue) => (
+                      <li key={issue}>{issue}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="small muted">
+                    Блокирующих замечаний по доступным данным нет.
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </section>
+  );
+}
+
+function freshnessLabel(state: string): string {
+  switch (state) {
+    case "fresh":
+      return "наблюдение не старше 24 часов";
+    case "stale":
+      return "наблюдение устарело";
+    case "not_available":
+      return "данных нет";
+    default:
+      return "свежесть не подтверждена";
+  }
 }

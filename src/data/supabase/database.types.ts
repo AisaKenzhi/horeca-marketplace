@@ -100,6 +100,7 @@ export type BuyerProcurementListItemRow = {
 export type BuyerDraftCartRow = {
   id: string;
   organization_id: string;
+  buyer_location_id: string | null;
   source_list_name: string;
   created_by: string;
   created_at: string;
@@ -190,8 +191,13 @@ export type Database = {
       >;
       buyer_draft_carts: Table<
         BuyerDraftCartRow,
-        { organization_id: string; source_list_name: string; created_by?: string },
-        never
+        {
+          organization_id: string;
+          source_list_name: string;
+          created_by?: string;
+          buyer_location_id?: string | null;
+        },
+        Partial<Pick<BuyerDraftCartRow, "buyer_location_id">>
       >;
       buyer_draft_cart_items: Table<
         BuyerDraftCartItemRow,

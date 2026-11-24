@@ -799,6 +799,45 @@ body {
 .draft-cart-card h4 {
   margin-bottom: 0.65rem;
 }
+.draft-cart-review {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0.75rem 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.draft-cart-review h5,
+.draft-cart-review-group h6 {
+  margin: 0;
+}
+.draft-cart-review .notice {
+  margin: 0;
+}
+.draft-cart-review-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.draft-cart-review-lines,
+.draft-cart-review-issues {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+.draft-cart-review-lines > li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.25rem 0;
+}
+.draft-cart-review-issues {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
 
 @media (min-width: 720px) {
   .procurement-list-items li {

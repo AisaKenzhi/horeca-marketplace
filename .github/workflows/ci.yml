@@ -1,8 +1,8 @@
 name: CI
 
-# Local/CI verification only. This workflow never deploys, never touches a
-# remote database, and never needs secrets: the prototype is client-only and
-# uses synthetic demo data.
+# Local/CI verification only. This workflow never deploys or touches a remote
+# database. Browser tests use a local mocked Supabase endpoint and synthetic data;
+# database tests run separately against an ephemeral local Postgres instance.
 on:
   push:
     branches: ["**"]

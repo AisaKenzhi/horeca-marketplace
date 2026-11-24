@@ -1,5 +1,5 @@
 begin;
-select plan(46);
+select plan(54);
 
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at)
 values
@@ -26,6 +26,9 @@ insert into public.organization_memberships(organization_id,user_id,role) values
  ('22000000-0000-4000-8000-000000000001','12000000-0000-4000-8000-000000000004','viewer'),
  ('22000000-0000-4000-8000-000000000001','12000000-0000-4000-8000-000000000005','receiver'),
  ('22000000-0000-4000-8000-000000000006','12000000-0000-4000-8000-000000000006','owner');
+insert into public.buyer_locations(id,organization_id,name,address,delivery_zone) values
+ ('52000000-0000-4000-8000-000000000001','22000000-0000-4000-8000-000000000001','Buyer location','Test address','Zone A'),
+ ('52000000-0000-4000-8000-000000000002','22000000-0000-4000-8000-000000000002','Other location','Other address','Zone B');
 insert into public.supplier_profiles(organization_id,display_name)
 values ('22000000-0000-4000-8000-000000000006','Supplier');
 update public.supplier_profiles
@@ -77,6 +80,9 @@ select ok(
   and not has_column_privilege('authenticated','public.buyer_draft_carts','source_list_name','INSERT')
   and not has_column_privilege('authenticated','public.buyer_draft_carts','created_by','INSERT')
   and not has_column_privilege('authenticated','public.buyer_draft_carts','organization_id','UPDATE')
+  and has_column_privilege('authenticated','public.buyer_draft_carts','buyer_location_id','UPDATE')
+  and not has_column_privilege('authenticated','public.buyer_draft_carts','source_list_name','UPDATE')
+  and not has_table_privilege('authenticated','public.buyer_draft_carts','UPDATE')
   and has_column_privilege('authenticated','public.buyer_draft_cart_items','quantity','UPDATE')
   and not has_column_privilege('authenticated','public.buyer_draft_cart_items','organization_id','UPDATE')
   and not has_column_privilege('authenticated','public.buyer_draft_cart_items','catalog_offer_id','UPDATE')
@@ -143,6 +149,24 @@ select lives_ok(
   'buyer can update a cart quantity'
 );
 select is((select quantity from public.buyer_draft_cart_items where id=current_setting('test.cart_item_id')::uuid),5,'quantity update persists');
+select lives_ok(
+  $$update public.buyer_draft_carts set buyer_location_id='52000000-0000-4000-8000-000000000001' where id=current_setting('test.cart_id')::uuid$$,
+  'buyer can save a location owned by the same organization'
+);
+select is(
+  (select buyer_location_id::text from public.buyer_draft_carts where id=current_setting('test.cart_id')::uuid),
+  '52000000-0000-4000-8000-000000000001',
+  'selected buyer location is persisted on the draft'
+);
+select throws_ok(
+  $$update public.buyer_draft_carts set buyer_location_id='52000000-0000-4000-8000-000000000002' where id=current_setting('test.cart_id')::uuid$$,
+  '23503',null,'composite foreign key rejects a location from another organization'
+);
+select is(
+  (select buyer_location_id::text from public.buyer_draft_carts where id=current_setting('test.cart_id')::uuid),
+  '52000000-0000-4000-8000-000000000001',
+  'rejected foreign location does not alter the saved buyer location'
+);
 reset role;
 select set_config('request.jwt.claim.sub','12000000-0000-4000-8000-000000000002',true);
 select throws_ok(
@@ -168,6 +192,15 @@ select lives_ok(
   'viewer update is filtered by RLS'
 );
 select is((select quantity from public.buyer_draft_cart_items where id=current_setting('test.cart_item_id')::uuid),5,'viewer update did not change quantity');
+select lives_ok(
+  $$update public.buyer_draft_carts set buyer_location_id=null where id=current_setting('test.cart_id')::uuid$$,
+  'viewer location update is filtered by RLS'
+);
+select is(
+  (select buyer_location_id::text from public.buyer_draft_carts where id=current_setting('test.cart_id')::uuid),
+  '52000000-0000-4000-8000-000000000001',
+  'viewer cannot change the selected buyer location'
+);
 select lives_ok(
   $$delete from public.buyer_draft_cart_items where id=current_setting('test.cart_item_id')::uuid$$,
   'viewer cannot delete a cart line'
@@ -200,7 +233,16 @@ select throws_ok(
   $$select public.create_buyer_draft_cart('22000000-0000-4000-8000-000000000001','32000000-0000-4000-8000-000000000001')$$,
   '42501',null,'other buyer tenant cannot create a foreign draft cart'
 );
+select lives_ok(
+  $$update public.buyer_draft_carts set buyer_location_id='52000000-0000-4000-8000-000000000002' where id=current_setting('test.cart_id')::uuid$$,
+  'other buyer tenant update of a foreign cart is filtered by RLS'
+);
 reset role;
+select is(
+  (select buyer_location_id::text from public.buyer_draft_carts where id=current_setting('test.cart_id')::uuid),
+  '52000000-0000-4000-8000-000000000001',
+  'cross-tenant update leaves the original location unchanged'
+);
 
 set local role authenticated;
 select set_config('request.jwt.claim.sub','12000000-0000-4000-8000-000000000003',true);

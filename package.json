@@ -20,7 +20,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
-    "e2e:ci": "npm run build && playwright test",
+    "e2e:ci": "VITE_SUPABASE_URL=http://127.0.0.1:4173 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_playwright-test-key npm run build && VITE_SUPABASE_URL=http://127.0.0.1:4173 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_playwright-test-key playwright test",
     "e2e:install": "playwright install chromium",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run build",
     "verify:full": "npm run format && npm run lint && npm run typecheck && npm run test:coverage && npm run build"
