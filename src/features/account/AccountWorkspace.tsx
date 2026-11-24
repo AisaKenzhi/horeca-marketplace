@@ -28,6 +28,7 @@ import {
   setCatalogOfferPublished,
   updateBuyerLocation,
   updateCatalogOfferTerms,
+  updateSupplierProfileDisplayName,
   workspaceErrorMessage,
   type BuyerLocationDraft,
   type CatalogOfferDraft,
@@ -393,6 +394,7 @@ function AccountWorkspaceReady({
   const [invitationBusy, setInvitationBusy] = useState(false);
   const [inviteNotice, setInviteNotice] = useState("");
   const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+  const [editingProfileName, setEditingProfileName] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -743,7 +745,35 @@ function AccountWorkspaceReady({
                     <span>
                       Проверка: {verificationLabel(activeProfile.verification_status)}
                     </span>
+                    {canManageOrganization(activeOrganization.role) ? (
+                      <button
+                        className="btn btn-ghost"
+                        type="button"
+                        onClick={() => setEditingProfileName(true)}
+                      >
+                        Изменить название
+                      </button>
+                    ) : null}
                   </div>
+                  {editingProfileName &&
+                  canManageOrganization(activeOrganization.role) ? (
+                    <SupplierProfileNameForm
+                      initialName={activeProfile.display_name}
+                      busy={actionBusy}
+                      onSave={(displayName) =>
+                        runAction(
+                          () =>
+                            updateSupplierProfileDisplayName(
+                              client,
+                              activeOrganization.id,
+                              displayName,
+                            ),
+                          "Название профиля обновлено.",
+                        ).then(() => setEditingProfileName(false))
+                      }
+                      onCancel={() => setEditingProfileName(false)}
+                    />
+                  ) : null}
                   {activeProfile.verification_status !== "approved" ? (
                     <Notice tone="warn">
                       Можно сохранять SKU как черновики. Покупатели не увидят предложения
@@ -1103,6 +1133,54 @@ function BuyerLocationForm({
           Отмена
         </button>
       ) : null}
+    </form>
+  );
+}
+
+function SupplierProfileNameForm({
+  initialName,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  readonly initialName: string;
+  readonly busy: boolean;
+  readonly onSave: (displayName: string) => Promise<void>;
+  readonly onCancel: () => void;
+}): ReactNode {
+  const [displayName, setDisplayName] = useState(initialName);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    try {
+      await onSave(displayName);
+    } catch (caught) {
+      setError(workspaceErrorMessage(caught));
+    }
+  }
+
+  return (
+    <form className="account-form" onSubmit={(event) => void submit(event)}>
+      <label className="field" htmlFor="supplier-profile-name-edit">
+        Название профиля
+        <input
+          id="supplier-profile-name-edit"
+          required
+          minLength={2}
+          maxLength={160}
+          value={displayName}
+          onChange={(event) => setDisplayName(event.target.value)}
+        />
+      </label>
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+      <button className="btn btn-primary" type="submit" disabled={busy}>
+        Сохранить название
+      </button>
+      <button className="btn btn-ghost" type="button" onClick={onCancel}>
+        Отмена
+      </button>
     </form>
   );
 }

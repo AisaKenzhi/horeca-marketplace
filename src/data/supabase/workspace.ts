@@ -577,6 +577,24 @@ export async function createSupplierProfile(
   return unwrap(data, error);
 }
 
+export async function updateSupplierProfileDisplayName(
+  client: WorkspaceClient,
+  organizationId: string,
+  displayName: string,
+): Promise<SupplierProfileRow> {
+  const normalized = displayName.trim();
+  if (normalized.length < 2 || normalized.length > 160) {
+    throw new WorkspaceError("invalid");
+  }
+  const { data, error } = await client
+    .from("supplier_profiles")
+    .update({ display_name: normalized })
+    .eq("organization_id", organizationId)
+    .select("organization_id,display_name,verification_status,created_at")
+    .single();
+  return unwrap(data, error);
+}
+
 export async function createCatalogOffer(
   client: WorkspaceClient,
   organizationId: string,

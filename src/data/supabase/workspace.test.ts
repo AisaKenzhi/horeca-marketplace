@@ -3,6 +3,7 @@ import type {
   BuyerLocationRow,
   CatalogOfferRow,
   MembershipRole,
+  SupplierProfileRow,
   OrganizationType,
   VerificationStatus,
 } from "./database.types";
@@ -11,6 +12,7 @@ import {
   deleteBuyerLocation,
   updateBuyerLocation,
   updateCatalogOfferTerms,
+  updateSupplierProfileDisplayName,
   WorkspaceError,
   type WorkspaceClient,
 } from "./workspace";
@@ -38,6 +40,13 @@ const updatedOffer: CatalogOfferRow = {
   version: 2,
   created_at: "2026-11-23T00:00:00.000Z",
   updated_at: "2026-11-24T00:00:00.000Z",
+};
+
+const supplierProfileRow: SupplierProfileRow = {
+  organization_id: "supplier-1",
+  display_name: "Fresh supplier",
+  verification_status: "pending",
+  created_at: "2026-11-24T00:00:00.000Z",
 };
 
 const locationRow: BuyerLocationRow = {
@@ -129,6 +138,9 @@ class QueryBuilder {
   }
 
   single() {
+    if (this.table === "supplier_profiles") {
+      return { data: supplierProfileRow, error: this.options.updateError ?? null };
+    }
     if (this.table === "buyer_locations") {
       return { data: locationRow, error: this.options.updateError ?? null };
     }
@@ -584,5 +596,32 @@ describe("buyer location management", () => {
       column: "id",
       value: "location-1",
     });
+  });
+});
+
+describe("supplier profile display name", () => {
+  it("updates only the display name, scoped to the acting supplier tenant", async () => {
+    const { client, updates, filters } = createClient();
+
+    await expect(
+      updateSupplierProfileDisplayName(client, "supplier-1", "New name"),
+    ).resolves.toEqual(supplierProfileRow);
+
+    expect(updates).toEqual([
+      { table: "supplier_profiles", values: { display_name: "New name" } },
+    ]);
+    expect(filters).toContainEqual({
+      table: "supplier_profiles",
+      column: "organization_id",
+      value: "supplier-1",
+    });
+  });
+
+  it("rejects an empty or oversized name before any write", async () => {
+    const { client, updates } = createClient();
+    await expect(
+      updateSupplierProfileDisplayName(client, "supplier-1", "  "),
+    ).rejects.toMatchObject<Partial<WorkspaceError>>({ code: "invalid" });
+    expect(updates).toEqual([]);
   });
 });
