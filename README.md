@@ -75,6 +75,7 @@ hotel owner, two suppliers (Alpha/Beta), and platform moderator/support.
 | `npm test`              | Vitest unit + component tests                                    |
 | `npm run test:coverage` | Coverage for `src/domain` and `src/data` (fails below the floor) |
 | `npm run e2e`           | Playwright E2E (desktop + mobile) against the preview            |
+| `npm run e2e:ci`        | local mock Supabase build + Playwright (what CI runs)            |
 | `npm run verify`        | lint → typecheck → test → build                                  |
 | `npm run verify:full`   | format → lint → typecheck → coverage → build                     |
 
@@ -116,8 +117,11 @@ First E2E run may need a browser: `npm run e2e:install` (Chromium).
   detail.
 - **Local CSV import** that validates, previews added/updated/unchanged/error with
   a before/after diff, applies atomically and creates no duplicates on re-import.
-- **Verification gates**: `npm run verify` and the CI workflow
-  (`.github/workflows/ci.yml`) run lint, typecheck, unit tests, build and E2E.
+- **Verification gates**: `npm run verify:full` and the CI workflow
+  (`.github/workflows/ci.yml`) run format, lint, typecheck, unit tests with
+  coverage, build and E2E. A separate `.github/workflows/supabase-db.yml` runs
+  migrations, six pgTAP suites and local PostgREST/concurrency smoke scripts
+  against an **ephemeral local** Postgres. Evidence level: **local only**.
 
 ## What P0 deliberately does NOT do
 
@@ -128,8 +132,10 @@ First E2E run may need a browser: `npm run e2e:install` (Chromium).
   pending until an operator workflow exists.
 - No logistics, routing or cold-chain features.
 - Demo personas remain switches, not authentication. The optional `/account`
-  route uses Supabase Auth; invitations, role administration and business identity
-  verification are not implemented.
+  route uses Supabase Auth with **local** invitations and owner/admin role
+  management (invitation links are handed over manually — no email provider).
+  Business identity verification and supplier review are not implemented; a
+  `pending` profile is never verified.
 - No XLSX/ERP/1C import (CSV only, local and validated).
 
 See [`docs/product-roadmap.md`](docs/product-roadmap.md) for the consolidated

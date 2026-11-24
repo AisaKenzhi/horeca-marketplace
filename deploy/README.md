@@ -4,7 +4,9 @@ These files are **inert** until a host is configured and the owner explicitly
 approves publishing. Nothing here creates a domain, a paid plan, a secret or a
 production environment.
 
-The app is a client-only SPA: `npm run build` writes static assets to `dist/`.
+The app is a client-only SPA on the default demo build (without Supabase env
+vars): `npm run build` writes static assets to `dist/`. The repository also
+contains an opt-in, local-only Supabase account slice; see `docs/tenant-foundation.md`.
 Deep links such as `/basket` are client routes, so the host must fall back to
 `index.html` for unknown paths.
 
@@ -104,4 +106,5 @@ sudo rm /etc/nginx/sites-enabled/horeca-demo-domain && sudo systemctl reload ngi
 sudo rm -rf /var/www/horeca-demo
 ```
 
-It is still a **demo**: `noindex`, synthetic data, no backend, no real orders.
+It is still a **demo**: `noindex`, synthetic data, no backend on this build, no
+real orders. The repo's opt-in local Supabase slice is not part of this static build.

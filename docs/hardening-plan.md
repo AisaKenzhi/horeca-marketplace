@@ -79,5 +79,8 @@ external calls.
 
 - Any backend, Supabase, or SQL migration (the brief allows local schema only if
   a product need justifies it; the P0 has no server, so none is added).
+  Historical scope of `harden/p0-product-ready`; current HEAD contains a
+  documented **local-only** Supabase slice. Still no hosted/staging/production
+  resource, no real data and no external operations.
 - XLSX/ERP/1C import, live sync, geocoding.
 - Real payment adapter wiring (only the contract + mock remain, unchanged).
