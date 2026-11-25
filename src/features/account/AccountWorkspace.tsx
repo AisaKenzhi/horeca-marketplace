@@ -7,6 +7,7 @@ import { membershipRoleLabel } from "@/features/account/roleLabels";
 import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
 import { OrganizationAccess } from "@/features/account/OrganizationAccess";
 import { SupplierCatalogImportPanel } from "@/features/account/SupplierCatalogImportPanel";
+import { SupplierSuborderInboxPanel } from "@/features/account/SupplierSuborderInboxPanel";
 import {
   acceptOrganizationInvitation,
   canManageOrganization,
@@ -877,6 +878,15 @@ export function AccountWorkspaceReady({
                 </>
               )}
             </section>
+          ) : null}
+
+          {activeOrganization?.organization_type === "supplier" ? (
+            <SupplierSuborderInboxPanel
+              client={client}
+              organizationId={activeOrganization.id}
+              organizationType="supplier"
+              role={activeOrganization.role}
+            />
           ) : null}
 
           {activeOrganization?.organization_type === "supplier" &&

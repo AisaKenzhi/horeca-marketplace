@@ -940,3 +940,126 @@ body {
     justify-content: flex-end;
   }
 }
+
+.supplier-suborder-inbox {
+  display: grid;
+  grid-template-columns: minmax(12rem, 0.75fr) minmax(0, 1.6fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.supplier-suborder-list ul,
+.supplier-suborder-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.supplier-suborder-list-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.supplier-suborder-list-item:hover,
+.supplier-suborder-list-item.is-selected {
+  border-color: var(--primary);
+  background: #f5f9fc;
+}
+.supplier-suborder-list-item:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+.supplier-suborder-list-id {
+  font-weight: 700;
+}
+.supplier-suborder-details {
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.supplier-suborder-detail-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.supplier-suborder-detail-heading h3 {
+  margin: 0;
+}
+.supplier-suborder-detail-heading p {
+  margin: 0.3rem 0 0;
+}
+.supplier-suborder-lines {
+  margin: 0.75rem 0;
+  padding-top: 0.65rem;
+  border-top: 1px solid var(--border);
+}
+.supplier-suborder-lines li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.supplier-suborder-actions,
+.supplier-suborder-form,
+.supplier-suborder-proposal-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.supplier-suborder-form {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.supplier-suborder-form .field {
+  min-width: 0;
+}
+.supplier-suborder-proposal-line {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.supplier-suborder-proposal-line legend {
+  padding: 0 0.25rem;
+  font-weight: 700;
+}
+.supplier-suborder-proposal-line .field {
+  min-width: 0;
+}
+.supplier-suborder-refresh-row {
+  margin-top: 0.75rem;
+}
+.supplier-suborder-load-error,
+.supplier-suborder-action-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+@media (max-width: 719px) {
+  .supplier-suborder-inbox {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .supplier-suborder-proposal-line {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

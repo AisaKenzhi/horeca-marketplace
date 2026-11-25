@@ -21,6 +21,31 @@ const mockUser = {
 const organizationId = "00000000-0000-4000-8000-000000000023";
 const locationId = "00000000-0000-4000-8000-000000000024";
 const now = "2026-11-24T00:00:00.000Z";
+const supplierSuborderId = "00000000-0000-4000-8000-000000000025";
+const supplierSuborderLineId = "00000000-0000-4000-8000-000000000026";
+const syntheticSupplierSuborder = {
+  supplier_suborder_id: supplierSuborderId,
+  status: "awaiting_supplier",
+  workflow_version: 1,
+  current_terms_version: 1,
+  terms_reason: "Synthetic current terms only",
+  response_deadline_at: null,
+  created_at: now,
+  updated_at: now,
+  lines: [
+    {
+      buyer_request_line_id: supplierSuborderLineId,
+      title: "Synthetic flour",
+      sell_unit_label: "bag",
+      units_per_sell_unit: 1,
+      pack_amount: "5.000",
+      pack_base_unit: "kg",
+      quantity: 4,
+      price_amount: "18.2500",
+      currency: "PLN",
+    },
+  ],
+};
 
 function mockSession() {
   return {
@@ -70,8 +95,15 @@ async function mockAuth(page: Page): Promise<void> {
 async function mockWorkspace(
   page: Page,
   organizationType: "buyer" | "supplier",
-): Promise<{ mutations: { method: string; table: string; payload: unknown }[] }> {
+  options: { readonly supplierSuborders?: readonly Record<string, unknown>[] } = {},
+): Promise<{
+  mutations: { method: string; table: string; payload: unknown }[];
+  rpcCalls: { functionName: string; payload: Record<string, unknown> | null }[];
+}> {
   const mutations: { method: string; table: string; payload: unknown }[] = [];
+  const rpcCalls: { functionName: string; payload: Record<string, unknown> | null }[] =
+    [];
+  let supplierSuborders = [...(options.supplierSuborders ?? [])];
   let location = {
     id: locationId,
     organization_id: organizationId,
@@ -84,10 +116,65 @@ async function mockWorkspace(
 
   await page.route(`${LOCAL_SUPABASE_URL}/rest/v1/**`, async (route) => {
     const request = route.request();
-    const table = new URL(request.url()).pathname.split("/").at(-1);
+    const pathname = new URL(request.url()).pathname;
+    const table = pathname.split("/").at(-1);
     const method = request.method();
     const payload = request.postDataJSON() as Record<string, unknown> | null;
     let rows: unknown[] = [];
+    let rpcResponse: unknown = [];
+
+    if (pathname.includes("/rest/v1/rpc/") && method === "POST") {
+      const functionName = table ?? "unknown";
+      rpcCalls.push({ functionName, payload });
+      if (functionName === "list_supplier_suborders") {
+        rpcResponse =
+          payload?.p_supplier_organization_id === organizationId ? supplierSuborders : [];
+      } else if (functionName === "accept_supplier_suborder") {
+        const requestedId = payload?.p_supplier_suborder_id;
+        const current = supplierSuborders.find(
+          (suborder) => suborder.supplier_suborder_id === requestedId,
+        );
+        if (
+          payload?.p_supplier_organization_id !== organizationId ||
+          !current ||
+          !requestedId
+        ) {
+          await route.fulfill({
+            status: 403,
+            contentType: "application/json",
+            body: JSON.stringify({ code: "42501", message: "Synthetic tenant boundary" }),
+          });
+          return;
+        }
+        const nextVersion = Number(current.workflow_version) + 1;
+        const currentTermsVersion = Number(current.current_terms_version);
+        supplierSuborders = supplierSuborders.map((suborder) =>
+          suborder.supplier_suborder_id === requestedId
+            ? {
+                ...suborder,
+                status: "supplier_accepted",
+                workflow_version: nextVersion,
+                updated_at: "2026-11-24T00:05:00.000Z",
+              }
+            : suborder,
+        );
+        rpcResponse = {
+          supplier_suborder_id: requestedId,
+          status: "supplier_accepted",
+          workflow_version: nextVersion,
+          current_terms_version: currentTermsVersion,
+          event_id: "00000000-0000-4000-8000-000000000027",
+          replayed: false,
+        };
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: { "x-supabase-api-version": "2024-01-01" },
+        body: JSON.stringify(rpcResponse),
+      });
+      return;
+    }
 
     if (method === "GET") {
       if (table === "organizations") {
@@ -178,7 +265,7 @@ async function mockWorkspace(
       body: JSON.stringify(rows),
     });
   });
-  return { mutations };
+  return { mutations, rpcCalls };
 }
 
 async function signIn(page: Page): Promise<void> {
@@ -192,7 +279,7 @@ async function signIn(page: Page): Promise<void> {
 test("buyer can edit and delete a location through the account UI", async ({ page }) => {
   test.skip(!usesLocalAuthMock, "Runs only with the local mocked Supabase build.");
   await mockAuth(page);
-  const { mutations } = await mockWorkspace(page, "buyer");
+  const { mutations, rpcCalls } = await mockWorkspace(page, "buyer");
   page.on("dialog", (dialog) => dialog.accept());
   await signIn(page);
 
@@ -206,6 +293,9 @@ test("buyer can edit and delete a location through the account UI", async ({ pag
 
   await page.getByRole("button", { name: "Удалить точку" }).click();
   await expect(page.getByText("Точка удалена из этой организации.")).toBeVisible();
+  expect(rpcCalls.some((call) => call.functionName === "list_supplier_suborders")).toBe(
+    false,
+  );
   expect(mutations).toEqual([
     {
       method: "PATCH",
@@ -241,4 +331,44 @@ test("supplier owner can change only the display name through the account UI", a
       payload: { display_name: "Updated synthetic supplier" },
     },
   ]);
+});
+
+test("supplier owner sees and accepts only the synthetic API-backed inbox item", async ({
+  page,
+}) => {
+  test.skip(!usesLocalAuthMock, "Runs only with the local mocked Supabase build.");
+  await mockAuth(page);
+  const { rpcCalls } = await mockWorkspace(page, "supplier", {
+    supplierSuborders: [syntheticSupplierSuborder],
+  });
+  await signIn(page);
+
+  await expect(
+    page.getByRole("heading", { name: "Входящие подзаказы поставщика" }),
+  ).toBeVisible();
+  await expect(page.getByText(/текущее состояние по данным API/i)).toBeVisible();
+  await expect(page.getByText(/не полный журнал решений/i)).toBeVisible();
+  await expect(page.getByText("Synthetic flour")).toBeVisible();
+  await page.getByRole("button", { name: "Принять условия" }).click();
+  await expect(page.getByText(/Текущий статус: Поставщик принял условия/)).toBeVisible();
+
+  const supplierCalls = rpcCalls.filter((call) =>
+    ["list_supplier_suborders", "accept_supplier_suborder"].includes(call.functionName),
+  );
+  expect(supplierCalls.map((call) => call.functionName)).toEqual([
+    "list_supplier_suborders",
+    "accept_supplier_suborder",
+    "list_supplier_suborders",
+  ]);
+  expect(supplierCalls[0]?.payload).toEqual({
+    p_supplier_organization_id: organizationId,
+  });
+  expect(supplierCalls[1]?.payload).toMatchObject({
+    p_supplier_organization_id: organizationId,
+    p_supplier_suborder_id: supplierSuborderId,
+    p_expected_version: 1,
+  });
+  expect(supplierCalls[1]?.payload?.p_idempotency_key).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f-]{27}$/i,
+  );
 });
