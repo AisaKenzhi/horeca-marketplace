@@ -63,6 +63,19 @@ const listId = "list-1";
 const itemId = "item-1";
 const offerId = "offer-1";
 const now = "2026-11-24T00:00:00.000Z";
+
+function freshOfferTimestamps(): Pick<
+  CatalogOfferRow,
+  "price_valid_until" | "price_observed_at" | "availability_observed_at"
+> {
+  const observedAt = new Date();
+  return {
+    price_valid_until: new Date(observedAt.getTime() + 60 * 60 * 1000).toISOString(),
+    price_observed_at: observedAt.toISOString(),
+    availability_observed_at: observedAt.toISOString(),
+  };
+}
+
 const location: BuyerLocationRow = {
   id: "buyer-location-1",
   organization_id: organizationId,
@@ -342,16 +355,17 @@ describe("BuyerProcurementListsPanel", () => {
 
   it("saves an organization-owned delivery point and reports when available checks pass", async () => {
     const user = userEvent.setup();
+    const freshTimestamps = freshOfferTimestamps();
     const currentOffers = offers.map((offer) =>
       offer.id === offerId
         ? {
             ...offer,
+            ...freshTimestamps,
             price_amount: 12.5,
             currency: "KZT",
             moq: 2,
             order_step: 1,
             availability: "in_stock" as const,
-            price_valid_until: "2026-11-25T00:00:00.000Z",
           }
         : offer,
     );
@@ -381,16 +395,17 @@ describe("BuyerProcurementListsPanel", () => {
 
   it("requires explicit buyer confirmation and displays a non-accepted request snapshot", async () => {
     const user = userEvent.setup();
+    const freshTimestamps = freshOfferTimestamps();
     const readyOffers = offers.map((offer) =>
       offer.id === offerId
         ? {
             ...offer,
+            ...freshTimestamps,
             price_amount: 12.5,
             currency: "KZT",
             moq: 2,
             order_step: 1,
             availability: "in_stock" as const,
-            price_valid_until: "2026-11-25T00:00:00.000Z",
           }
         : offer,
     );
@@ -569,15 +584,16 @@ describe("BuyerProcurementListsPanel", () => {
 
   it("keeps per-supplier reasons and the idempotency key after a rejected submit", async () => {
     const user = userEvent.setup();
+    const freshTimestamps = freshOfferTimestamps();
     const readyOffers = offers.map((offer) =>
       offer.id === offerId
         ? {
             ...offer,
+            ...freshTimestamps,
             price_amount: 12.5,
             currency: "KZT",
             moq: 2,
             availability: "in_stock" as const,
-            price_valid_until: "2026-11-25T00:00:00.000Z",
           }
         : offer,
     );
