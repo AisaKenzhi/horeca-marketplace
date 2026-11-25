@@ -105,6 +105,10 @@ authorise staging or production use.
   macro execution, no silent value "fixing", atomic apply (or an explicitly
   shown partial apply) and no duplicate rows on re-import.
 
+## Mandatory roadmap workflow
+
+Before any task, read this file and [`docs/product-roadmap.md`](docs/product-roadmap.md), verify the remote integration HEAD and required checks, and take only a task marked `NEXT` after confirming dependencies and permissions. Mark it `IN PROGRESS` at start and keep actual progress, tests, SHA, and blockers current. Work on a separate branch and PR targeting the current integration feature branch; mark `DONE` only after merge there with green required checks. Never touch `main`, production/live DB, deploy, or real-world side effects without explicit owner approval.
+
 ## Verification before you finish
 
 Run the full local gate:
