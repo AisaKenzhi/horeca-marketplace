@@ -1,273 +1,490 @@
-# HoReCa Marketplace — единый план развития до Product Ready
+# HoReCa Marketplace — единый roadmap до Product Ready
+
+**Назначение:** единый рабочий план для владельца и всех агентов. Это roadmap, а не подтверждение коммерческой, юридической или production-готовности и не разрешение на внешние операции.
+
+**Проверенная база документа:** integration feature branch `feat/horeca-unified-delivery-2026-11-24` @ `ef40c1bf5a0cc8af34dd29a1f66c53e7d61f7b97` (свежий remote HEAD на момент подготовки этого среза). Перед каждым новым изменением HEAD требуется проверить заново.
+
+**Целевой результат:** приватный продукт, проверенный в изолированной непроизводственной среде и подготовленный к ограниченному закрытому пилоту после решения владельца и прохождения бизнес-, юридических, безопасностных и операционных gates. Сам пилот и публичный запуск — отдельные решения; roadmap не разрешает их начинать.
+
+## Актуальная сводка и важные ограничения
+
+- **Модель пилота:** платформа выступает продавцом в пользовательском потоке; внутренние подзаказы распределяются по поставщикам. Это выбранная продуктовая схема, но **не** решение о конкретном юридическом операторе, seller of record, налогах, договорах или ответственности.
+- **PR #29:** merged, merge SHA `83bae73021cc580a6d656691448db82c1e190b18`; base PR — `feat/product-ready-tenant-foundation-2026-11-23`, source head — `feat/horeca-unified-delivery-2026-11-24` @ `6e9144c4c67a7e19d27fe3f40e7c044eaff3420c`. На merge SHA все три проверенных CI checks успешны: lint/typecheck/unit/build, Chromium desktop/mobile E2E, ephemeral Supabase/pgTAP/PostgREST.
+- **PR #30:** merged в integration feature branch, merge SHA и текущий remote HEAD — `ef40c1bf5a0cc8af34dd29a1f66c53e7d61f7b97`; base PR был `feat/horeca-unified-delivery-2026-11-24` @ `6e9144c4c67a7e19d27fe3f40e7c044eaff3420c`, PR head — `cb3c57bf50baf9e045b01c01208af78ba6641865`. Проверки на PR head были зелёными. **На merge SHA post-merge CI не полностью зелёный:** run [45516817340](https://github.com/AisaKenzhi/horeca-marketplace/actions/runs/45516817340) от 2026-11-25 00:17 UTC отметил три падения в `BuyerProcurementListsPanel.test.tsx`: `saves an organization-owned delivery point and reports when available checks pass`, `requires explicit buyer confirmation and displays a non-accepted request snapshot`, `keeps per-supplier reasons and the idempotency key after a rejected submit`. Все три success-flow теста используют `price_observed_at`/`availability_observed_at = 2026-11-24T00:00:00.000Z` и `price_valid_until = 2026-11-25T00:00:00.000Z`; в CI наблюдения уже старше 24 часов, а срок цены истёк на 17 минут. Текущая доменная логика корректно блокирует такую корзину. Локальный повтор на Node 24 подтвердил assertion failures. После этого Vitest reporter на Node 20.19 дополнительно упал с `TypeError: Map.groupBy is not a function`, скрыв подробные CI assertions; это вторичная ошибка репортинга, не причина блокировки корзины. На merge SHA E2E и ephemeral Supabase checks прошли; build был пропущен. PR #30 физически слит, но его задача и integration gate **не считаются DONE**, пока актуальная integration-ветка не получит зелёный требуемый CI.
+- **Buyer proposal/current-terms UI:** следующий запланированный buyer feature после текущего integration gate, но **остановлен по просьбе Айсы**. На проверенном HEAD нет его implementation commit и PR. Не начинать/не возобновлять без отдельного разрешения; его рабочую копию/ветку не использовать для этой задачи.
+- **`main` и production:** PR #29 и #30 не направлялись в `main`; на момент проверки `main` был на `1980bcf2ef3aa97d9351697d01f2401547d36e17`. Production, hosted/live DB, deploy, реальные заказы, платежи и уведомления этим roadmap/task не затрагивались.
+- **Справка:** старые статусные строки в [`handoff-unified-delivery.md`](handoff-unified-delivery.md) описывают срез до слияний; текущий источник статусов — этот roadmap и фактический GitHub/CI. В handoff добавлена верхняя корректирующая заметка, не удаляя историческую запись.
+
+### Правило статусов
+
+- **DONE** — работа влита в текущую integration feature branch через PR, требуемые checks успешны на результате слияния, acceptance criteria выполнены. Для исторической базы PR #29 его собственный merge SHA и проверки подтверждены отдельно выше.
+- **IN PROGRESS** — работа реально начата и есть текущий исполнитель/ветка; указываются только выполненные части и текущие проверки.
+- **NEXT** — единственный следующий разрешённый пункт после проверки зависимостей и решений владельца. До начала он не должен иметь активных изменений.
+- **BLOCKED** — работу нельзя начинать/завершать до указанного события, решения или устранения проверяемого blocker. Если блокировка связана с волей владельца, агент не снимает её сам.
+- **NOT STARTED** — работа ещё не начата и пока не является следующим разрешённым пунктом.
 
-**Статус документа:** текущий сводный план развития; план, а не подтверждение готовности или разрешение запускать внешние операции.\
-**Срез кода:** PR #29 работает в ветке `feat/horeca-unified-delivery-2026-11-24`; его исходный HEAD до этого follow-up — `a20e67128bf8f06ea897fd95fb0438f47277b464`, target/base — `feat/product-ready-tenant-foundation-2026-11-23` @ `41e47ec57e76b541c21970bacf349366db08a892`.\
-**Цель:** развить проект от приватного прототипа до подготовленного и проверенного закрытого пилота, а затем — только после отдельных бизнес-, юридических и операционных решений — до возможного публичного запуска.
+Статус этапа — сводка его задач: он не становится DONE, пока не выполнены все обязательные задачи этапа и их gates.
+
+## Обязательный порядок работы агентов
+
+1. Перед любой задачей прочитать `AGENTS.md` и этот roadmap; затем свежо проверить remote `feat/horeca-unified-delivery-2026-11-24`, PR и required checks. Не полагаться на старые локальные checkout, SHA, handoff или отчёты.
+2. Взять **только** задачу, помеченную `NEXT`, и лишь после проверки всех зависимостей, разрешений и бизнес-решений. Не выбирать `BLOCKED`/`NOT STARTED` и не возобновлять задачу, остановленную владельцем.
+3. При начале поставить задаче `IN PROGRESS` в roadmap, указать агента/ветку/PR и исходный SHA. Обновлять прогресс, тесты, фактические результаты и blocker по мере работы; не выдавать предположение за результат.
+4. Работать в отдельной worktree от свежего integration HEAD. Для каждого изменения создать отдельную feature branch и PR **в актуальную integration feature branch**. После review и зелёных required checks слить готовый PR сразу, не накапливать завершённые ветки. Перед push/merge заново сверить remote base/head; при расхождении остановиться и согласовать безопасное обновление.
+5. `DONE` ставить только после merge в integration branch и зелёных required checks на результирующем commit. Не делать merge в `main`, deploy, подключение/миграции live DB, реальные заказы, платежи, расчёты, доставку или реальные уведомления без отдельного явного разрешения Айсы.
+6. Не force-push, не переписывать чужие ветки/рабочие копии и не удалять пользовательские незакоммиченные файлы. Если проверка падает, зафиксировать точный SHA, check и следующий шаг; не объявлять задачу завершённой.
 
-## Единая последовательная интеграция (2026-11-24)
+## Таблица прогресса
 
-Этот срез собран **одним агентом последовательно в одной integration feature branch**, а не тремя параллельными потоками. Три brief-файла task-1/task-2/task-3 остаются справочными чек-листами; мастер-задание о последовательной интеграции определяет порядок.
+`Текущий SHA` — commit, к которому относится работа/проверенное состояние. Для задач без реализации указан только baseline; он не означает наличие коммита по задаче. Если локальная и удалённая ветки расходятся, актуален удалённый HEAD после свежей проверки.
 
-- Целевая база: `feat/product-ready-tenant-foundation-2026-11-23` @ `41e47ec57e76b541c21970bacf349366db08a892`.
-- Integration branch: `feat/horeca-unified-delivery-2026-11-24` (создана от базы, общая ветка не менялась).
-- Источники: PR #28 (`bb95d9d`) — ported; legacy backend `8424cbd` — ported; legacy inbox UI `f493384` — reviewed, **не портирован**; рабочий каталог Пети `/workspace/horeca-marketplace-task3` и ветка `feat/supplier-suborder-backend-lifecycle-2026-11-24` в этом окружении отсутствуют, поэтому его заявленные результаты **не перепроверены**.
-- Добавлено: безопасные edit/delete buyer locations и edit display_name supplier profile; server-side supplier-suborder workflow с private tables, deny-by-default grants, typed RPC, immutable events/receipts, version/idempotency/audit; 7-й pgTAP набор и все **семь** публичных workflow RPC в generated types.
-- Не добавлено: operator moderation queue (в БД нет доверенной platform-moderator роли), удаление аккаунта/организации и retention, kk-локализация, supplier inbox UI в PR #29, реальные заказы/уведомления/оплата/доставка и hosted/staging/production подключения.
+| Task ID         | Статус      | Исполнитель / ветка / PR                                                                                      | Текущий SHA                                                                                     | Что готово                                                                                                                                | Тесты / проверки                                                                                                                                          | Blocker / следующий шаг                                                                                                                                                |
+| --------------- | ----------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CI-BASE-01      | NEXT        | Следующий назначенный агент; отдельная branch от integration; PR ещё нет                                      | `ef40c1bf5a0cc8af34dd29a1f66c53e7d61f7b97`                                                      | Причина падений локализована: у трёх success-flow тестов истекли фиксированные freshness/price-expiry timestamps; reporter error вторична | На `ef40c1b`: lint/typecheck прошли; 3 component tests упали; build skipped; E2E и Supabase green; локальный повтор на Node 24 показал assertion failures | Отдельный code-fix PR: детерминированно зафиксировать тестовое время или генерировать свежие timestamps относительно времени теста; не менять buyer UI/доменную логику |
+| TENANT-BASE-01  | DONE        | PR #29; `feat/horeca-unified-delivery-2026-11-24` → `feat/product-ready-tenant-foundation-2026-11-23`; PR #29 | `83bae73021cc580a6d656691448db82c1e190b18`                                                      | Tenant/account foundation, roles, RLS, buyer locations и управляемые профили; дальнейшие privacy/moderation задачи выделены отдельно      | 3 required CI checks на merge SHA green                                                                                                                   | Следующий отдельный пункт — account deletion/retention policy после решения владельца                                                                                  |
+| BUY-BASE-01     | DONE        | PR #29; см. merge PR #29                                                                                      | `83bae73021cc580a6d656691448db82c1e190b18`                                                      | Атомарный buyer request, immutable snapshots строк и локации, frozen cart; request не называется принятым заказом                         | CI PR #29 green; E2E desktop/mobile; Supabase concurrency suite green                                                                                     | Buyer acceptance of supplier-proposed current terms — отдельная задача BUY-TERMS-01                                                                                    |
+| CAT-BASE-01     | DONE        | Базовая catalog/import implementation присутствует в проверенной feature base; PR #29 green baseline          | `83bae73021cc580a6d656691448db82c1e190b18`                                                      | Supplier offers и ограниченный CSV preview/apply с серверной повторной валидацией и идемпотентностью                                      | Unit/component suite и build PR #29 green                                                                                                                 | Self-service onboarding, price/availability governance и операционная проверка — SUP-ONBOARD-01/CAT-OPS-01                                                             |
+| SUP-WF-01       | DONE        | PR #29; backend workflow в integration source                                                                 | `83bae73021cc580a6d656691448db82c1e190b18`                                                      | Private supplier suborders; 7 публичных узких RPC; immutable events/receipts; version/idempotency/audit                                   | Supabase pgTAP/PostgREST и остальные required checks PR #29 green                                                                                         | Не является резервированием, подтверждённой закупкой, платежом или доставкой                                                                                           |
+| SUP-INBOX-01    | BLOCKED     | PR #30; `feat/supplier-suborder-inbox-ui-2026-11-25` → integration; PR #30 merged                             | `ef40c1bf5a0cc8af34dd29a1f66c53e7d61f7b97` (PR head `cb3c57bf50baf9e045b01c01208af78ba6641865`) | Frontend-only supplier inbox включён в integration; исходный PR head CI green                                                             | На PR head все 3 GitHub Actions checks green; на merge SHA общий CI failure в buyer list component suite                                                  | Сначала CI-BASE-01. Затем проверить фактический merge SHA и только после зелёного CI считать inbox закрытым; не реконструировать скрытую audit history                 |
+| BUY-TERMS-01    | BLOCKED     | Нет активного исполнителя/коммита/PR; buyer proposal workstream оставлен нетронутым                           | Baseline `ef40c1bf5a0cc8af34dd29a1f66c53e7d61f7b97`; task commit отсутствует                    | Зафиксировано только как следующий запланированный buyer feature                                                                          | Тесты не запускались; кода/PR нет                                                                                                                         | Остановлен по просьбе Айсы. Нужен отдельный сигнал владельца на возобновление; не считать разрешённым от того, что он следующий в продуктовой очереди                  |
+| SUP-ONBOARD-01  | BLOCKED     | Не назначен; branch/PR отсутствуют                                                                            | Baseline `ef40c1b`; task commit отсутствует                                                     | Существует supplier profile/catalog foundation                                                                                            | Новые onboarding tests не запускались                                                                                                                     | Нужны выбранные пилотный сегмент, документы допуска, контактные и коммерческие поля, владелец проверки                                                                 |
+| CAT-OPS-01      | NOT STARTED | Не назначен; branch/PR отсутствуют                                                                            | Baseline `ef40c1b`; task commit отсутствует                                                     | CSV preview/apply есть; полноценный supplier self-service и история цен/наличия не заявлены                                               | Новые тесты не запускались                                                                                                                                | Зависит от SUP-ONBOARD-01 и согласованных правил свежести, единиц, цен и доступности                                                                                   |
+| MOD-01          | BLOCKED     | Не назначен; branch/PR отсутствуют                                                                            | Baseline `ef40c1b`; task commit отсутствует                                                     | В доверенной DB роли platform moderator нет                                                                                               | Новые тесты не запускались                                                                                                                                | Нужны владелец полномочий, доверенная identity/role модель и threat review; поставщик не может сам одобрить себя                                                       |
+| BUY-UAT-01      | NOT STARTED | Не назначен; branch/PR отсутствуют                                                                            | Baseline `ef40c1b`; task commit отсутствует                                                     | Текущий request submit flow проверен автоматизированными тестами                                                                          | Ручные usability/UAT с пилотным сегментом не проводились                                                                                                  | Зависит от разрешения на исследование и выбора пилотной аудитории; без внешних контактов до отдельного поручения                                                       |
+| SUP-RESPONSE-01 | BLOCKED     | Не назначен; branch/PR отсутствуют                                                                            | Baseline `ef40c1b`; backend contract `supplier-suborder-workflow.md`                            | Версии и `responseDeadlineAt` хранятся; автоматический expiry не реализован                                                               | Backend version/idempotency concurrency checks есть; expiry policy tests отсутствуют                                                                      | Владелец должен определить последствия дедлайна, продления, отмены и молчания поставщика                                                                               |
+| STOCK-01        | BLOCKED     | Не назначен; branch/PR отсутствуют                                                                            | Baseline `ef40c1b`; task commit отсутствует                                                     | Supplier-reported availability — только наблюдение; числовой остаток/резерв не реализованы                                                | Нет inventory concurrency suite                                                                                                                           | Требуется выбрать модель: подтверждение поставщика, reserve TTL или иное; согласовать с поставщиками и юристом                                                         |
+| ORDER-01        | BLOCKED     | Не назначен; branch/PR отсутствуют                                                                            | Baseline `ef40c1b`; task commit отсутствует                                                     | Buyer request и supplier proposal/response разделены                                                                                      | Есть тесты только для текущего request/suborder workflow                                                                                                  | Нужны статусы подтверждённой закупки, отмены/частичного исполнения, владельцы переходов и причины                                                                      |
+| RECEIVE-01      | NOT STARTED | Не назначен; branch/PR отсутствуют                                                                            | Baseline `ef40c1b`; task commit отсутствует                                                     | Демо-модель receiving не подтверждает production процесс                                                                                  | Нет persistent account acceptance/dispute tests                                                                                                           | Зависит от ORDER-01, операционного процесса и правил претензий/возврата                                                                                                |
+| LEGAL-01        | BLOCKED     | Владелец/квалифицированный консультант не назначен; PR нет                                                    | Baseline `ef40c1b`; документных утверждений нет                                                 | Platform-as-seller выбран как поток пилота; юрлицо/роль не определены                                                                     | Требуется письменный review и список применимых требований                                                                                                | Утвердить оператора, страну/юрисдикцию, договоры, seller of record, ответственность, consumer/B2B и product-specific требования                                        |
+| FIN-01          | BLOCKED     | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Нет утверждённых комиссии, маржи, налогов, счетов или settlement                                                                          | Требуются accounting/legal sign-off и тест-кейсы после решения                                                                                            | Утвердить pricing/fees, currency, tax/accounting docs, reconciliation, refunds, supplier payout и owner каждого расчёта                                                |
+| PAY-01          | BLOCKED     | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Checkout/payment/payout отсутствуют                                                                                                       | Payment sandbox tests не запускались                                                                                                                      | Не выбирать провайдера или схему до LEGAL-01/FIN-01; любые реальные платежи запрещены без отдельного разрешения                                                        |
+| FUL-01          | BLOCKED     | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Доставка/тариф/покрытие не подтверждены                                                                                                   | Нет logistics sandbox/операционных тестов                                                                                                                 | Выбрать ответственного, зону, тариф, срок и правила категорий; подтвердить реальную способность исполнять                                                              |
+| FUL-02          | NOT STARTED | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Нет tracking/исключений/температурной цепи                                                                                                | Нет тестов                                                                                                                                                | Зависит от FUL-01 и выбранной пилотной логистики                                                                                                                       |
+| OPS-NOTIFY-01   | BLOCKED     | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Автоматические внешние сообщения отсутствуют                                                                                              | Нет доставки/повторов/consent tests                                                                                                                       | Нужны утверждённые адресаты, каналы, шаблоны, согласия/основания, privacy, dedupe/retry и отдельное разрешение на реальные уведомления                                 |
+| OPS-SUPPORT-01  | NOT STARTED | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Нет production operator console/runbook                                                                                                   | Нет operator-role/RLS/audit tests                                                                                                                         | Зависит от MOD-01, процессов споров и privacy review                                                                                                                   |
+| SEC-BASE-01     | DONE        | Локальная tenant foundation; PR #29 green CI                                                                  | `83bae73021cc580a6d656691448db82c1e190b18`                                                      | RLS/grants/tenant tests, no cross-tenant supplier workflow access, typed limited RPC; доказательства только local/ephemeral CI            | pgTAP, PostgREST, concurrency checks PR #29 green                                                                                                         | Не доказывает hosted security; перед deployment нужен независимый review и отдельный разрешённый staging scope                                                         |
+| SEC-PRIVACY-01  | BLOCKED     | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Нет утверждённых retention/deletion правил и hosted logging                                                                               | Требуются data inventory, threat/privacy review и негативные тесты                                                                                        | Нужны legal operator, цели/основания, сроки хранения, удаление/архивация, экспорт, redaction и breach process                                                          |
+| LOC-01          | BLOCKED     | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Русский default; `kk` сейчас алиас; supplier offer currency явная; KZT встречается в synthetic examples                                   | Автоматизированной полной ru/kk и валютной терминологии проверки нет                                                                                      | Выбрать город/языки и currency policy; не добавлять FX или считать KZT общей валютой без решения                                                                       |
+| A11Y-AUTO-01    | DONE        | E2E inherited from base; PR #29/#30 head checks                                                               | `ef40c1bf5a0cc8af34dd29a1f66c53e7d61f7b97` (E2E check green)                                    | Automated axe gate и desktop/mobile Playwright покрытие в актуальной feature base                                                         | E2E на merge SHA PR #30 green; PR #29 E2E green                                                                                                           | Это не заменяет ручную доступность; общий PR #30 CI всё ещё красный по другой suite                                                                                    |
+| A11Y-MANUAL-01  | NOT STARTED | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Ручной screen-reader, keyboard и zoom pass не подтверждены                                                                                | Нужен зафиксированный manual checklist и результаты                                                                                                       | Выполнить до Product Ready на утверждённом nonprod build                                                                                                               |
+| REL-OBS-01      | NOT STARTED | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Production monitoring/alerting/tracing не подключены                                                                                      | Нет hosted metrics/alert tests                                                                                                                            | Выбрать разрешённую среду и SLO/alerts, correlation IDs, redaction и эскалацию; никакой secret/PII в logs                                                              |
+| REL-BACKUP-01   | NOT STARTED | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Backup/restore procedure и drill не подтверждены                                                                                          | Restore test отсутствует                                                                                                                                  | Согласовать RPO/RTO, backup retention/access; провести restore drill на nonprod и сохранить доказательства                                                             |
+| REL-ABUSE-01    | NOT STARTED | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | CSV local limits есть; hosted Auth/API abuse limits не проверены                                                                          | Rate-limit/abuse security tests отсутствуют                                                                                                               | Перед hosted use проверить signup, import, request rate limits, brute-force handling и recovery                                                                        |
+| STAGE-01        | BLOCKED     | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Hosted/staging account не связан                                                                                                          | Deploy/hosted DB не запускались                                                                                                                           | Нужны все применимые upstream gates и отдельное разрешение на изолированный nonprod setup                                                                              |
+| STAGE-02        | NOT STARTED | Не назначен; PR нет                                                                                           | Baseline `ef40c1b`; task commit отсутствует                                                     | Непроизводственный release/rollback rehearsal не выполнялся                                                                               | Нет migration/rollback/restore rehearsal                                                                                                                  | Зависит от STAGE-01 и готовых security/reliability runbooks                                                                                                            |
+| PILOT-01        | BLOCKED     | Владелец; решения/артефакты не утверждены                                                                     | Baseline `ef40c1b`; task commit отсутствует                                                     | Есть список открытых вопросов; город, сегмент и метрики не выбраны                                                                        | Discovery evidence отсутствует                                                                                                                            | Утвердить город, аудиторию, категории, лимиты, метрики/знаменатели, окно оценки и stop criteria                                                                        |
+| PILOT-02        | BLOCKED     | Не назначен; нет разрешения на запуск                                                                         | Baseline `ef40c1b`; task commit отсутствует                                                     | Пилотный gate не закрыт                                                                                                                   | Нет end-to-end controlled nonprod/pilot evidence                                                                                                          | Нужны legal/accounting, supplier/buyer consent, support, security, backups, green CI и отдельное разрешение владельца                                                  |
+| PILOT-EXEC-01   | NOT STARTED | Не назначен; внешняя работа не разрешена                                                                      | Baseline `ef40c1b`; task commit отсутствует                                                     | Реальный пилот не объявлялся                                                                                                              | Реальные заказы/платежи/сообщения не выполнялись                                                                                                          | Не начинать до явного одобрения конкретных участников, scope, даты, объёмов и операционных процедур                                                                    |
+| LAUNCH-01       | NOT STARTED | Владелец; нет launch approval                                                                                 | Baseline `ef40c1b`; task commit отсутствует                                                     | Публичного запуска нет                                                                                                                    | Production checks/deploy отсутствуют                                                                                                                      | Отдельный Go/No-Go, approved commit/domain/date, rollback, support/on-call и проверенная экономика; без отдельного разрешения не выполнять                             |
 
-Историю интеграции, точные базовый и исходный PR SHA, число RPC/pgTAP-наборов, актуальные проверки и open decisions фиксирует [`handoff-unified-delivery.md`](handoff-unified-delivery.md). Это инженерный срез, не готовый Product Ready или запуск.
+## Этапы и конкретные задачи
 
-## Коротко: где проект сейчас
+Этапы следуют зависимостям, а не календарю. Параллельно разрешены только безопасные локальные спецификации и тесты, не меняющие внешнюю систему. Решения владельца, юридическая экспертиза и production setup не заменяются кодом.
 
-Проект прошёл дальше первоначального P0-прототипа. В нём есть демо-путь на синтетических данных и отдельный опциональный account/workspace-путь на Supabase: аутентифицированные организации и участники, каталог поставщиков, списки закупок, черновики корзины, безопасный импорт каталога и сохранение покупательского procurement request с неизменяемыми снимками строк и внутренними подзаказами по поставщикам.
+### Этап 0 — Стабилизировать актуальную integration-базу
 
-Текущий request — именно **запрос**, не принятый поставщиком заказ. Отправка атомарна и идемпотентна; корзина блокируется, а цена и доступность проверяются повторно. Но поставщик пока не получает уведомление и не видит внутренний suborder. Не реализованы подтверждение заказа, резерв товара, реальная оплата, счёт/налоги, доставка и полноценная операционная работа платформы. Хостированная база и staging для этого проекта не подключены; текущие локальные тесты не доказывают, что реальные интеграции или коммерческая модель работают.
+**Статус этапа: BLOCKED** — на merge SHA PR #30 один required CI workflow не зелёный. Единственный текущий `NEXT` — CI-BASE-01.
 
-## Текущий статус: сделано, отдельно в работе, дальше
+#### CI-BASE-01 — устранить post-merge CI failure
 
-### Уже сделано в текущей ветке
+**Статус: NEXT.**
 
-- Реализована Supabase-основа с аутентифицированными tenant-организациями, ролями, RLS и локальными проверками разграничения доступа.
-- Добавлены supplier catalog и импорт CSV с серверной валидацией, предпросмотром, идемпотентным применением и тестами.
-- Добавлены списки закупок и сохраняемые черновики корзины покупателя.
-- Реализован атомарный, идемпотентный buyer request для модели platform-as-seller: сервер перепроверяет условия, сохраняет неизменяемые снимки строк, создаёт закрытые supplier suborders и блокирует отправленную корзину. Это запрос, а не подтверждённый заказ.
-- В репозитории семь pgTAP-наборов с `no_plan()` (точное число assertions определяется запуском), tenant/RLS-сценарии и отдельный loopback-only concurrency smoke. Smoke проверяет повторную отправку одной корзины; follow-up также проверяет гонку supplier accept/reject на одинаковой версии. PostgreSQL-проверки требуют disposable local Supabase или CI.
+- **Цель и границы:** исправить только время в трёх success-flow фикстурах `src/features/account/BuyerProcurementListsPanel.test.tsx`. Их наблюдения `2026-11-24T00:00:00.000Z` уже stale (>24 часов), а `price_valid_until = 2026-11-25T00:00:00.000Z` истёк к CI run 00:17 UTC; продуктовая блокировка корректна. Ошибка Vitest `Map.groupBy` на Node 20.19 возникает после assertion failures и является вторичной. Не менять buyer UI/доменную логику и не запускать buyer proposal feature.
+- **Предусловия:** перед началом повторно сверить remote HEAD, PR #30 checks/logs и рабочие деревья; отдельную ветку создать от свежего integration HEAD, не включать docs-only изменения.
+- **Acceptance / DoD:** success-flow тесты стабильно используют контролируемое тестовое время или свежие timestamps, не зависящие от календарной даты; regression tests не обходят stale/expiry проверки; targeted suite и полный применимый CI проходят; code-fix PR отдельный от docs-only PR; все required checks зелёные на актуальном merge commit; прогресс и SHA отражены в таблице.
+- **Тесты и артефакты:** targeted `BuyerProcurementListsPanel` tests, `npm run verify:full`, `npm run e2e:ci`, required ephemeral Supabase workflow; ссылка на failing run 45516817340, ссылки на новые passing checks и короткое воспроизведение причины.
+- **Blocker:** никаких известных внешних решений; если причина требует расширить scope или менять unrelated buyer behaviour — остановиться и согласовать.
 
-### Уже проверено в текущей базе
+### Этап 1 — Tenant/account foundation и доверенные полномочия
 
-Mobile buyer-flow E2E smoke test уже входит в наследуемую базу. Ранее записанные результаты проверки исходной интеграции на PR #29 — исторический baseline, а не доказательство новых follow-up изменений; актуальные проверки этого follow-up указаны в handoff. Ни один из этих результатов не доказывает hosted/production поведение.
+**Статус этапа: IN PROGRESS** — базовый слой есть и проверен; deletion/retention и доверенная operator/moderator authority не закрыты.
 
-### Следующее по roadmap
+#### TENANT-BASE-01 — существующая tenant/account основа
 
-PR #29 содержит buyer/account изменения, безопасное редактирование supplier display name и backend supplier-suborder workflow. Follow-up дополняет неизменяемый buyer location snapshot, согласованный SQL/TypeScript return shape и реальные concurrency/component/E2E проверки. Supplier inbox UI не входит в PR #29 и рассматривается отдельно как зависимый PR только после актуализации и проверки контракта; moderation остаётся заблокированной отсутствием доверенной platform-moderator роли.
+**Статус: DONE для зафиксированного PR #29 scope.**
 
-**Пока явно не реализовано и не входит в текущие coding-задачи:** реальные уведомления поставщикам, резервирование запасов, оплата/расчёты, счета и налоги, доставка и production deployment. Для каждого из этих направлений нужны отдельные продуктовые и юридические решения; production и внешние действия требуют отдельного разрешения.
+- **Цель и границы:** сохранить существующий Auth/workspace, tenant roles, locations, supplier profile и RLS/grants/RPC boundaries; не считать UI проверкой доступа.
+- **Предусловия:** свежие миграции и реальный тестовый tenant создаются только в разрешённой local/ephemeral DB.
+- **Acceptance / DoD:** buyer/supplier object ownership выводится сервером; роли и права проверяются для каждого write; чужой object ID не раскрывает данные; используемая локация не удаляется; snapshots заказа не зависят от последующей правки адреса.
+- **Тесты и артефакты:** tenant/role pgTAP, component/E2E edit/delete scenarios, CI PR #29 merge `83bae...`; список применённых migrations/RPC и локальных доказательств.
 
-Это согласуется с актуальными [`product-scope.md`](product-scope.md), [`tenant-foundation.md`](tenant-foundation.md) и README. В репозитории пока **нет одного прежнего документа**, который задаёт полный этапный план до Product Ready: `hardening-plan.md` — исторический план локального hardening, `product-ready-supplier-catalog-import.md` — спецификация одного направления, а `deploy-readiness.md` прямо предупреждает, что значительная часть его статуса — исторический snapshot другой ветки/commit. Этот документ сводит дальнейший путь; он не заменяет исходный код как доказательство фактического поведения.
+#### ACC-DELETE-01 — account/org deletion, export и retention
 
-## Что уже выбрано, а что не решено
+**Статус: BLOCKED; tracked в SEC-PRIVACY-01.**
 
-### Зафиксировано
+- **Цель и границы:** определить удаление аккаунта/организации, перенос владения/архивацию, экспорт, retention для заявок и audit. Не выбрать срок хранения за владельца.
+- **Предусловия:** назначены юридический оператор и владелец записей; утверждены правовые основания/сроки и последствия для immutable snapshots, invitations и finance records.
+- **Acceptance / DoD:** утверждённая data inventory и policy описывает, что удаляется, анонимизируется или хранится, кем и в какой срок; интерфейс не обещает несуществующее удаление; реализация least-privilege, транзакционная и восстанавливаемая.
+- **Тесты и артефакты:** legal/privacy sign-off, matrix данных и ролей, pgTAP для owner/non-owner/retention/foreign tenant, E2E и deletion audit.
+- **Blocker:** решения владельца и профильная экспертиза.
 
-- Проектный рыночный ориентир — **Казахстан**; конкретные город, сегмент заведений и стартовые категории пилота ещё нужно выбрать.
-- Для пилотного потока выбран **platform-as-seller**: покупатель отправляет запрос платформе как продавцу, а внутренние подзаказы маршрутизируются отдельным поставщикам.
-- Условия, цена, количество и доступность должны быть явными и проверяемыми; устаревшие или неизвестные условия нельзя молча считать актуальными.
-- Заказы нескольких поставщиков остаются отдельными ветками; согласование, исполнение, приёмка и оплата — разные состояния.
-- Никаких реальных заказов, уведомлений поставщикам, платежей, публичной публикации или production deployment без отдельного решения.
-- Демо на синтетических данных и реальный account-путь должны оставаться чётко различимыми.
+#### MOD-01 — доверенная platform-moderator authority
 
-### До реального пилота нужно решить
+**Статус: BLOCKED.**
 
-1. Где и на каком сегменте начинается пилот: город, тип заведений и стартовые категории.
-2. Кто юридически управляет платформой и может выступать продавцом; применимые юрисдикция, договоры, налоги, чеки/счета и ответственность.
-3. Кто будут реальные поставщики и покупатели, какие документы и проверки нужны для допуска.
-4. Кто устанавливает цены, подтверждает наличие и отвечает за изменение условий; каковы сроки ответа и правила отмены.
-5. Как устроены оплата, расчёты с поставщиками, комиссия/маржа, возвраты и сверка.
-6. Кто доставляет, по каким зонам, тарифам и условиям, включая категории, для которых важны температура или срок годности.
-7. Какие данные собираются, где они хранятся, каковы сроки хранения, удаления и поддержки пользователей.
-8. Какой измеримый результат считается успешным пилотом. Целевые значения нужно установить после выбора сегмента и доступных исходных данных, а не придумывать заранее.
+- **Цель и границы:** безопасно определить, кто может проверять поставщиков, каталог и проблемные заказы; текущего доверенного moderator DB role нет. Не давать supplier самоподтверждение и не реализовывать moderation через скрытую кнопку.
+- **Предусловия:** назначены оператор платформы, полномочия, identity source, separation-of-duties и break-glass owner.
+- **Acceptance / DoD:** привилегия назначается только доверенным серверным процессом; deny-by-default grants/RLS; все действия с причиной append-only audit; отзыв доступа и расследование проверены.
+- **Тесты и артефакты:** threat model, role/tenant negative pgTAP, audit tests, операторский runbook и утверждение владельца.
+- **Blocker:** trusted authority и legal/operator decision отсутствуют.
 
-Пока эти вопросы не решены, можно безопасно продолжать разработку и тестирование на локальных синтетических данных. Нельзя представлять проект как работающий рынок или принимать реальные заявки.
+### Этап 2 — Onboarding поставщика, каталог, цены и доступность
 
-## Этапы развития
+**Статус этапа: IN PROGRESS** — каталог и ограниченный CSV import есть; полный self-service и процесс верификации не сделаны.
 
-Этапы ниже — порядок зависимостей, а не календарная оценка. Discovery и проектирование могут идти параллельно с безопасной локальной разработкой. Любой переход к реальным пользователям, данным или внешним сервисам требует отдельного допуска.
+#### CAT-BASE-01 — существующий каталог и CSV import
 
-### Этап 0 — Уточнить пилотную гипотезу и снять противоречия в документации
+**Статус: DONE для текущего локального scope.**
 
-**Задачи**
+- **Цель и границы:** сохранить offer snapshots и ограниченный импорт каталога; не добавлять XLSX/ERP/1C или live sync без подтверждённой потребности.
+- **Предусловия:** синтетические fixtures и лимиты файла/строк; никаких реальных прайсов в тестах.
+- **Acceptance / DoD:** preview показывает все ошибки; сервер повторно валидирует; apply атомарен/идемпотентен; повтор не создаёт дубликаты; formula-like cells не исполняются; цены/наличие имеют отдельные timestamps.
+- **Тесты и артефакты:** unit/component tests для bounds, malformed rows, retry/dedup, stale prices, CSV safety; merge/check evidence PR #29.
 
-- Выбрать пилотный город, сегмент заведений и небольшое стартовое ядро категорий.
-- Сформулировать одну закупочную задачу, которую продукт решает лучше текущего процесса, и способ проверить это до интеграций.
-- Зафиксировать, что именно будет считаться спросом, активным покупателем/поставщиком и успешным сценарием.
-- Сохранять соответствие repository guidance текущей архитектуре: `AGENTS.md` уже описывает client-only demo отдельно от opt-in local Supabase account workspace; повторное обновление не требуется без изменения кода.
-- Поддерживать полный gate, включая mobile buyer-flow E2E. Отдельные supplier-inbox ветки сравнивать с актуальным контрактом только после завершения required CI для PR #29; не считать их частью этой базы.
+#### SUP-ONBOARD-01 — supplier onboarding и коммерческий профиль
 
-**Готово, когда:** пилотная гипотеза, сегмент и метрики записаны; выбранные решения отделены от гипотез; docs не утверждают, что Supabase-путь отсутствует или что тесты доказывают готовность к реальному рынку.
+**Статус: BLOCKED.**
 
-**Ограничение:** это планирование и подготовка. Не связываться с внешними компаниями и не создавать аккаунты от имени пользователя без отдельного поручения.
+- **Цель и границы:** определить onboarding шаги для профиля, контактных данных, категорий, delivery zones, условий, документов допуска и обновления каталога. Не собирать реальные данные или документы в прототипе без отдельного разрешения.
+- **Предусловия:** PILOT-01, legal operator, список обязательных документов и процесс доверенной проверки.
+- **Acceptance / DoD:** supplier видит неполные/ожидающие поля; статус pending не называется approved; неподтверждённые документы и условия не публикуются; повторное прохождение onboarding не создаёт дубль; правила и responsible reviewer задокументированы.
+- **Тесты и артефакты:** локальные synthetic onboarding scenarios, role/RLS tests, error/retry E2E, approved field list и operator checklist.
+- **Blocker:** сегмент, юрисдикция и процесс допуска не определены.
 
-### Этап 1 — Довести основу аккаунтов и рабочие пространства
+#### CAT-OPS-01 — offer CRUD, versioned price/availability и свежесть
 
-**Сейчас:** базовые организации, участники, локации, supplier profiles, Auth, RLS и каталожные предложения реализованы как локально проверяемая Supabase-основа. Некоторые процессы описаны миграциями, но ещё не являются готовым операторским продуктом.
+**Статус: NOT STARTED.**
 
-**Статус:** основа аккаунтов включает безопасные edit/delete buyer locations, включая защиту от удаления используемой локации, и supplier display-name edit только для owner/admin. В follow-up PR #29 добавляется immutable location snapshot в buyer request и прямые component/E2E регрессии. Серверные причины приглашения, удаление аккаунта/организации, supplier review queue и kk-локализация остаются отдельными задачами/решениями.
+- **Цель и границы:** дать разрешённым supplier roles управление offer lifecycle: draft/publish/unpublish, упаковка и единицы, MOQ/step, цена, валюта, доступность и история наблюдений.
+- **Предусловия:** SUP-ONBOARD-01; владелец данных цены/остатка; freshness thresholds и правила изменения условий утверждены.
+- **Acceptance / DoD:** каждая цена/доступность имеет источник и `observed_at`; stale/unknown не выглядит актуальным; изменение условий versioned/audited; импорт и UI не меняют чужого supplier; покупатель видит упаковку/MOQ/валюту и точную причину блокировки.
+- **Тесты и артефакты:** unit, integration, RLS/pgTAP и E2E для stale/unknown/changed versions, роли, atomic bulk update, dedup и catalogue freshness dashboard.
+- **Зависимости:** бизнес-правила свежести, единиц и ассортиментных категорий ещё не согласованы.
 
-**Задачи**
+### Этап 3 — Buyer request и явное принятие текущих условий поставщика
 
-- Завершить пользовательские сценарии входа, восстановления доступа, приглашения, принятия/отзыва приглашения и управления ролями; определить UX для истёкших и повторно использованных приглашений.
-- Добавить безопасное управление участниками и локациями с серверной проверкой прав.
-- Спроектировать удаление аккаунта/организации и политику хранения/удаления данных до реального сбора данных.
-- Проверить полный ролевой UX: buyer owner/admin/buyer/receiver/viewer и supplier owner/admin/catalog_operator/order_operator.
-- Реализовать очередь проверки поставщика и модераторские действия; пока её нет, статус pending нельзя трактовать как верификацию.
-- Подготовить полноценные русскую и казахскую локализации, включая проверку терминологии, если обе нужны для выбранного пилота.
+**Статус этапа: BLOCKED** — базовый buyer request DONE; следующий buyer proposal/current-terms UI остановлен владельцем.
 
-**Готово, когда:** все действия выполняются только в рамках организации и роли; приглашения и восстановление доступа работают end-to-end; поставщик не может сам назначить себе одобрение; удаление и сроки хранения определены; локальные RLS-тесты закрывают роли, границы организаций и негативные сценарии.
+#### BUY-BASE-01 — buyer draft и request submission
 
-### Этап 2 — Подготовить пригодный для работы каталог и onboarding поставщика
+**Статус: DONE для текущего request-only scope.**
 
-**Сейчас:** есть структура офферов с единицами упаковки, MOQ, шагом заказа, валютой и отдельными отметками времени цены/доступности; реализована ограниченная загрузка CSV с preview/apply и серверной повторной валидацией.
+- **Цель и границы:** сохранять черновые списки/корзину и отправлять атомарный procurement request платформе как продавцу; это не accepted purchase/order.
+- **Предусловия:** действующий tenant membership, выбранная buyer location; серверная повторная проверка offer freshness, approval, price expiry, MOQ/step.
+- **Acceptance / DoD:** повторная отправка идемпотентна; snapshots строк и location неизменяемы; cart freeze атомарен; частичный request не сохраняется; покупателю показано `submitted`, а не `accepted/reserved/delivered`.
+- **Тесты и артефакты:** local Supabase/pgTAP, request concurrency smoke, component/E2E reload/mobile и CI PR #29 merge green.
 
-**Задачи**
+#### BUY-TERMS-01 — buyer proposal/current-terms UI
 
-- Завершить onboarding поставщика: профиль, контактные и коммерческие данные, условия поставки, зоны доставки, график обновления каталога и процесс проверки.
-- Улучшить управление каталогом: создание/редактирование офферов, публикация/снятие с публикации, история изменений, ошибки и повторный импорт.
-- Сделать для покупателя понятными свежесть данных, валюту, формат упаковки, минимумы, доступность и ограничения доставки.
-- Установить операционный процесс проверки корректности SKU, категорий, единиц измерения, цены и доступности.
-- Не добавлять XLSX, ERP/1C и синхронизацию до появления подтверждённой потребности и отдельной спецификации.
+**Статус: BLOCKED по просьбе Айсы; commit/PR отсутствуют.**
 
-**Готово, когда:** поставщик может самостоятельно поддерживать корректный каталог в рамках утверждённого процесса; повторный импорт не создаёт дубликаты; изменения аудируются; неоднозначные или устаревшие данные не выглядят достоверными.
+- **Цель и границы:** после отдельного разрешения дать покупателю увидеть proposal поставщика и принять/отклонить **ровно указанную** версию `termsVersion` через существующие typed RPC. Это не создание новой backend state machine и не реальный заказ.
+- **Предусловия:** owner re-opens task; CI-BASE-01 закрыт; SUP-INBOX-01 и `supplier-suborder-workflow.md` перепроверены на свежей integration branch.
+- **Acceptance / DoD:** текущая версия, строки, цена, количество, причина и срок понятны; accept/reject доступен только buyer owner/admin/buyer; viewer read-only; молчание не означает согласия; stale `workflowVersion`/`termsVersion` безопасно обновляется и не принимает старое предложение; идентичный retry сохраняет idempotency key; UI не заявляет доступ к полной audit history, если API её не выдаёт.
+- **Тесты и артефакты:** role/tenant negative component tests, RPC contract tests, race/stale/retry tests, E2E desktop/mobile/keyboard, review summary и CI evidence.
+- **Blocker:** явная пауза владельца. Не начинать от наличия старой worktree или потому что задача стоит следующей в очереди.
 
-### Этап 3 — Завершить путь покупателя от поиска до отправки запроса
+#### BUY-UAT-01 — buyer usability и сценарии блокировок
 
-**Сейчас:** есть списки и черновики корзин; менеджер покупателя может отправить готовый запрос. На сервере повторно проверяются состояние оффера, свежесть цены и доступности, одобрение поставщика, срок цены, MOQ и шаг заказа. Создаются неизменяемый снимок покупательского запроса и приватные внутренние подзаказы.
+**Статус: NOT STARTED.**
 
-**Статус:** buyer request сохраняет immutable snapshots строк и теперь также snapshot buyer location; workflow SQL/TypeScript contract синхронизируется, включая `created_at`. Backend supplier-suborder workflow с version/idempotency/audit уже входит в PR #29; supplier inbox UI — отдельный зависимый срез после зелёного required CI.
+- **Цель и границы:** проверить пустой каталог, stale/unknown terms, partial basket, конфликт версии и повторное отправление на выбранном пилотном сегменте. Не обращаться к внешним участникам без отдельного поручения.
+- **Предусловия:** BUY-TERMS-01 разрешён и реализован; выбранные пользовательские personas и nonprod fixtures.
+- **Acceptance / DoD:** пользователь может объяснить, что отправлено, что ещё требует решения и почему supplier branch заблокирована; нет ложного обещания оплаты/резерва/доставки.
+- **Тесты и артефакты:** moderated usability checklist по разрешённому synthetic/internal test, список найденных проблем, E2E regression.
 
-**Задачи**
+### Этап 4 — Supplier response, inbox и согласование suborders
 
-- Проверить UX полного потока на мобильном устройстве и на русском; провести клавиатурную и ручную доступность сверх автоматического axe gate.
-- Уточнить состояния пустого каталога, отсутствующей цены, истёкших условий, конфликта версии, частично готовой корзины и повторного отправления запроса.
-- Явно показать покупателю, что «отправлено» не означает «принято», «зарезервировано» или «доставляется».
-- Сохранить атомарность, идемпотентность и неизменяемость снимков при любых изменениях; убедиться, что пользователь видит точную причину блокировки каждого поставщика.
-- Проверить end-to-end persist/reload и разграничение доступа в локальной базе, а не только в демо-репозитории.
+**Статус этапа: BLOCKED** — workflow backend DONE, но merged supplier inbox ждёт полного green post-merge CI; правила deadline остаются открыты.
 
-**Готово, когда:** покупатель может безопасно собрать черновик и осознанно отправить запрос; повторная отправка не дублирует его; сбой не оставляет частичный родительский запрос или чужие строки; каждый статус честно объясняет следующий шаг.
+#### SUP-WF-01 — versioned supplier-suborder backend
 
-### Этап 4 — Реализовать поставщицкую обработку и согласование заказа
+**Статус: DONE для workflow contract PR #29.**
 
-**Зависимость:** прежде чем этот сценарий использовать с реальными сторонами, должны быть определены юридическая роль платформы, условия предложения/принятия и ответственность за наличие и цену.
+- **Цель и границы:** отдельные supplier branches с typed read/mutation RPC, `expectedVersion`, idempotency, append-only events/receipts и immutable source snapshots. Workflow не принимает buyer request, не резервирует stock и не выполняет side effects.
+- **Предусловия:** только собственный tenant; private tables недоступны напрямую; public surface — явные RPC.
+- **Acceptance / DoD:** supplier видит только свои ветви; buyer видит только свои; role check server-side; stale version конфликтует; одинаковый ключ+payload безопасно replay; новый payload под тем же ключом отклоняется; каждый write/event/receipt атомарен.
+- **Тесты и артефакты:** 7 pgTAP suites, семь публичных workflow RPC, SQL/TypeScript return contract включая timestamps, concurrent accept/reject и required CI PR #29 green.
 
-**Сейчас:** backend state machine и семь ограниченных workflow RPC входят в PR #29; это не inbox UI и не подтверждённая закупка. Отдельный UI срез может начаться лишь после зелёного required CI PR #29 и review старой inbox UI-ветки относительно обновлённого контракта.
+#### SUP-INBOX-01 — supplier inbox UI
 
-**Задачи**
+**Статус: BLOCKED после merge PR #30; full integration CI требуется восстановить.**
 
-- Довести supplier inbox UI на существующих RPC: показывать только собственные suborders, текущие условия/версии и историю решений.
-- Подключить UI-действия поставщика — принять, отклонить или предложить конкретное изменение с причиной и сроком ответа — через существующие versioned/idempotent RPC.
-- Подключить покупательское принятие/отклонение конкретной версии изменения; молчание не считается согласием.
-- Определить сроки действия подтверждения цены и наличия, правила истечения ответа и безопасный повтор запроса.
-- Сохранять разделение состояний родительского запроса и каждой подзаказной ветки; проверять частичное принятие/отклонение без потери информации о других ветках.
-- Подключить пользовательский просмотр неизменяемой истории аудита; уведомления остаются отдельной задачей после выбора канала и содержания.
+- **Цель и границы:** frontend-only inbox на существующих RPC. Не добавлять backend workflow, DB, moderation, notifications, reservations, payments, delivery или audit endpoint.
+- **Предусловия:** CI-BASE-01 green; проверен актуальный branch/PR head и компонентная модель доступа.
+- **Acceptance / DoD:** только собственные suborders; корректные loading/error/empty; accept/reject/propose соответствует текущему contract; stale conflict безопасно обновляется; повтор клика не дублирует действие; UI говорит «текущее состояние по API», не выдумывает полную историю событий.
+- **Тесты и артефакты:** source PR #30 checks прошли; повторно green required checks на текущем integration merge SHA; component/E2E/RLS scope; обновлённый handoff.
 
-**Готово, когда:** поставщик видит только свою ветку; все переходы разрешены сервером и проверены тестами по ролям/организациям; каждая смена условий создаёт новую версию и требует точного решения покупателя; повторы и гонки не создают двойных действий.
+#### SUP-RESPONSE-01 — сроки, молчание и действие после deadline
 
-### Этап 5 — Исполнение, резервирование, отмена и приёмка
+**Статус: BLOCKED до бизнес-решения.**
 
-**Зависимость:** модель наличия, резервирования, подтверждённого заказа, доставки и возврата должна быть согласована с поставщиками и юридической/операционной моделью до реального исполнения.
+- **Цель и границы:** определить, что значит `responseDeadlineAt`: reminder only, блокировка, истечение или иной outcome; сейчас запись срока не запускает timer и не создаёт auto-accept.
+- **Предусловия:** поставщик/платформа/покупатель и юрист утверждают SLA, timezone, выходные, продление, отмену и последствия без ответа.
+- **Acceptance / DoD:** одна однозначная state table; ни молчание, ни просрочка не меняют условия без явного действия; audit содержит причину/actor; UI показывает точный срок и зону времени.
+- **Тесты и артефакты:** approved workflow spec, boundary/timezone/idempotency tests, notification plan (без отправки реальных сообщений).
 
-**Задачи**
+### Этап 5 — Order/stock lifecycle, отмены и приёмка
 
-- Выбрать модель наличия: только подтверждение поставщика, резервирование с TTL или иной механизм. Не считать supplier-reported `in_stock` гарантированным складским остатком.
-- Определить атомарное резервирование и освобождение резерва отдельно для каждой ветки; обработать гонки и истёкшие резервы.
-- Довести независимые состояния сборки, готовности к передаче, отправки, доставки и завершения, если они соответствуют выбранной логистике.
-- Реализовать отмену по веткам, причины, допустимые переходы, аудит и правила для уже переданных/доставленных заказов.
-- Дать покупателю сценарий приёмки и фиксации недостачи, повреждения, несоответствия, просрочки и обращения в поддержку.
-- Сформировать процессы разрешения споров, корректировок, возвратов и компенсаций — сначала как спецификацию, до финансовой реализации.
+**Статус этапа: BLOCKED** — нет подтверждённой модели запаса, договорной модели заказа, delivery и возвратов.
 
-**Готово, когда:** для каждого перехода есть владелец действия, разрешённая роль, аудит, идемпотентность, обработка частичного сбоя и понятное восстановление; статус заказа не подменяет фактически неподтверждённую оплату или доставку.
+#### STOCK-01 — источник наличия и резервирование
 
-### Этап 6 — Утвердить коммерческую, юридическую и финансовую модель
+**Статус: BLOCKED.**
 
-**Это бизнес/юридический блок, не решение, которое должен принимать разработчик.** Техническую реализацию нельзя считать готовой без владельца модели и профильной проверки применимых требований.
+- **Цель и границы:** выбрать, является ли availability supplier observation, подтверждаемым наличием или reservable stock; не выдавать `in_stock` за физический остаток.
+- **Предусловия:** письменное подтверждение поставщика, коммерческая и юридическая модель, supplier update cadence.
+- **Acceptance / DoD:** определены источник/частота/срок свежести, reserve ownership, TTL, capacity, release, oversell handling, partial acceptance и compensation; наличие в UI соответствует доказанному уровню.
+- **Тесты и артефакты:** signed decision/spec, race/oversell/expiry/rollback tests на synthetic/local DB; никаких live reservations.
 
-**Задачи**
+#### ORDER-01 — подтверждённый заказ, частичное исполнение и отмена
 
-- Установить юридического оператора и конкретную роль платформы как продавца/посредника в выбранном рынке.
-- Согласовать договорные отношения с покупателем и поставщиком, обязанности по качеству товара, цене, доступности, претензиям и возвратам.
-- Установить налогообложение, выставление документов, учёт, правила цены/комиссии и валюты.
-- Выбрать способ получения денег и выплаты поставщикам, комиссию/маржу и ответственность за возврат/спор.
-- Получить условия выбранного платёжного провайдера и оценить его пригодность для страны, валют и предполагаемой модели продавца.
+**Статус: BLOCKED.**
 
-**Готово, когда:** юридически и операционно утверждены оператор, условия, налоги/документы, средства приёма и выплаты, ответственность и процедуры; ни один выбор не выведен из одной лишь технической настройки `platform-as-seller`.
+- **Цель и границы:** разделить request, seller acceptance, confirmed order, supplier branch, cancellation, fulfillment и payment states; каждый supplier suborder остаётся независимым.
+- **Предусловия:** LEGAL-01, SUP-RESPONSE-01, STOCK-01 и FUL-01 утверждены.
+- **Acceptance / DoD:** для перехода определены actor, source state, target state, полномочия, reason, idempotency, `expectedVersion`, audit, timeout и восстановление; partial cancel/accept не скрывает соседние ветки.
+- **Тесты и артефакты:** state transition matrix, SQL/TypeScript contract, property/concurrency tests, negative role/tenant pgTAP, API/UI contract.
 
-### Этап 7 — Спроектировать и проверить доставку
+#### RECEIVE-01 — фактическая приёмка и претензии
 
-**Задачи**
+**Статус: NOT STARTED.**
 
-- Зафиксировать ответственность за доставку: поставщик, платформа, перевозчик или комбинация.
-- Определить зоны, минимумы, сроки, стоимость, доплаты, правила объединения и события отслеживания.
-- Уточнить требования отдельных категорий: температура, упаковка, срок годности и подтверждение передачи, если они применимы.
-- Выбрать ручной операционный процесс для пилота либо конкретную интеграцию; не обещать покрытие, которого система не проверяет.
-- Спроектировать обработку задержки, недоставки, частичной доставки и разногласий.
+- **Цель и границы:** фиксировать принятую/недостающую/повреждённую/несоответствующую/просроченную поставку и обращение в поддержку; не обещать возврат до его определения.
+- **Предусловия:** ORDER-01, FUL-01, юридические сроки, доказательства приёмки и процедура dispute.
+- **Acceptance / DoD:** role/authority, timestamps, quantities, evidence, reason codes, partial receipt и appeal/reopen описаны; корректировки append-only.
+- **Тесты и артефакты:** state matrix, pgTAP role/audit/idempotency cases, E2E partial receipt, synthetic evidence handling.
 
-**Готово, когда:** каждому заказу/подзаказу можно объяснить доставку, ответственного и тариф до подтверждения покупки; статусы и исключения проверены в sandbox или контролируемом тесте; заявленная зона совпадает с реальной операционной возможностью.
+### Этап 6 — Юридическая, коммерческая и accounting модель
 
-### Этап 8 — Операционная панель, поддержка и уведомления
+**Статус этапа: BLOCKED.** Техническая конфигурация `platform-as-seller` не определяет юридические обязанности.
 
-**Задачи**
+#### LEGAL-01 — оператор, договоры и применимые требования
 
-- Сделать операторскую очередь для проверки поставщиков, контроля каталогов, проблемных заказов и обращений.
-- Добавить безопасные инструменты поддержки и ручных корректировок только с полномочиями, причиной и append-only аудитом.
-- Выбрать каналы уведомлений и реализовать шаблоны для приглашений, ответа поставщика, изменений, задержек и статусов.
-- Гарантировать идемпотентную доставку уведомлений, повторные попытки, статус доставки и отсутствие утечки данных между организациями.
-- Подготовить правила обработки обращений, спорных изменений и инцидентов.
+**Статус: BLOCKED.**
 
-**Готово, когда:** операторы могут находить и сопровождать исключения без редактирования истории; уведомления идут только согласованным адресатам; ошибки доставки сообщений видны и восстанавливаемы.
+- **Цель и границы:** определить юридического оператора, seller of record, договорную модель buyer/supplier, товарную ответственность, претензии, возвраты, данные и рынок.
+- **Предусловия:** владелец выбирает страну/город и профильного юридического консультанта; никаких юридических утверждений разработчиками на основе кода.
+- **Acceptance / DoD:** подписанное/одобренное owner summary перечисляет юрлицо/роль, стороны и документы, ответственность, правила claims/refunds, privacy/retention и обязательные disclaimers; все открытые риски имеют владельца.
+- **Тесты и артефакты:** legal review evidence и прослеживаемая карта требований → UI/API/data; это review gate, а не unit test.
+- **Blocker:** юридический оператор и применимые решения не выбраны.
 
-### Этап 9 — Production readiness и контролируемый закрытый пилот
+#### FIN-01 — цена, комиссия, налоги, документы и расчёты
 
-**До этой точки не создавать и не подключать production-системы без отдельного разрешения.** Staging и sandbox должны быть отдельны от production и содержать только тестовые данные.
+**Статус: BLOCKED.**
 
-**Задачи и критерии допуска**
+- **Цель и границы:** согласовать buyer price, supplier settlement, fee/margin, currency, tax treatment, invoices/receipts, refunds, disputes, reconciliation и accounting owner. Не выбирать проценты и налоги за владельца.
+- **Предусловия:** LEGAL-01 и профильный accountant; подтверждённые supplier terms и товарные категории.
+- **Acceptance / DoD:** документированная formula/rounding в minor units, ledger events, invoice/tax responsibility, payout timing, partial/refund/dispute accounting, reconciliation evidence; суммы в UI/API совпадают по всей цепочке.
+- **Тесты и артефакты:** signed commercial/accounting spec, decimal/rounding/property tests, ledger reconciliation fixtures, sandbox-only scenarios после отдельного одобрения.
 
-- Утвердить целевой cloud/backend, отдельные dev/staging/prod проекты, домены, секреты и модель доступа; никаких service-role ключей в браузере.
-- Прогнать миграции, RLS, grants, RPC, idempotency и конкурентные сценарии на свежей непроизводственной базе; проверить откат/восстановление.
-- Добавить backup/restore drill, мониторинг ошибок и задержек, health checks, корреляционные идентификаторы, оповещения и план реагирования.
-- Настроить ограничения регистрации, импорта и запросов; протестировать восстановление аккаунта, удаление, резервное копирование и утечки между tenants.
-- Проверить доступность вручную, мобильные сценарии, кросс-браузерность, локализацию, правовые тексты, приватность и сроки хранения.
-- Проверить платежи в sandbox, включая повтор, отказ, отмену, возврат, сверку и частичный сбой; проверить доставку отдельно от оплаты.
-- Подготовить закрытый пилот: ограниченный круг участников, небольшие категории и понятная ручная поддержка, только после нужных утверждений и явного решения владельца.
+#### PAY-01 — платежи и settlement провайдера
 
-**Пилот измеряет, а не предполагает:** повторное использование, частоту устаревших данных, долю запросов с ответом поставщика, время ответа, конверсию запроса в подтверждённую закупку, точность выполнения/приёмки, отмены, спорные случаи, поддержку и экономику на заказ. Для каждого показателя заранее определить знаменатель, окно измерения, минимально допустимое значение и источник данных.
+**Статус: BLOCKED.**
 
-### Этап 10 — Решение о публичном запуске
+- **Цель и границы:** проектировать payment state machine и интеграцию только после выбора законной модели seller/payment flow. Сейчас checkout, card handling, escrow, split settlement и payout отсутствуют.
+- **Предусловия:** LEGAL-01 и FIN-01, провайдер и country/currency coverage одобрены; sandbox разрешён отдельно.
+- **Acceptance / DoD:** success/failure/pending/replay/cancel/refund/chargeback/reconciliation и webhook signatures обработаны идемпотентно; secrets не попадают в client; суммы сверяются с ledger; ни один UI status не означает оплату без провайдера.
+- **Тесты и артефакты:** provider sandbox test matrix, webhook replay tests, reconciliation report, security review; **никаких реальных платежей** без отдельного разрешения.
 
-Публичный запуск — отдельное решение, не автоматическое следствие зелёных тестов или успешного локального пилота. Перед ним владелец проверяет итоговые коммерческие и юридические условия, готовность поставщиков и поддержки, инцидентные процедуры, лимиты и экономику. Затем одобряется конкретный commit, целевой домен, режим работы, дата и план отката.
+### Этап 7 — Fulfillment и доставка
 
-**GO допускается только если:** закрыты все применимые security/privacy/legal/payment/delivery gates; пилотные показатели соответствуют заранее утверждённым критериям; данные, поддержка и инциденты реально сопровождаются; есть проверенный rollback и восстановление. Иначе статус остаётся **NO-GO**, а причины фиксируются.
+**Статус этапа: BLOCKED** — ответственность, покрытие и тарифы не выбраны.
 
-## Порядок текущей интеграции и продолжения
+#### FUL-01 — delivery responsibility, zones и tariffs
 
-PR #29 находится в `feat/horeca-unified-delivery-2026-11-24` и направлен в `feat/product-ready-tenant-foundation-2026-11-23`. Его исходный head для этого follow-up — `a20e67128bf8f06ea897fd95fb0438f47277b464`. Все проверки работают на синтетических данных; `main`, hosted/live DB, deploy и внешние side effects вне scope.
+**Статус: BLOCKED.**
 
-1. Завершить пять одобренных follow-up исправлений в фактической head-ветке PR #29, выполнить полный локально доступный gate, обычный push без force и дождаться зелёного required CI. PR оставить открытым и не сливать.
-2. Только после зелёного required CI read-only сравнить `feat/supplier-suborder-inbox-ui-2026-11-24` @ `f4933840df373f07a4cae9333ab659e3d526bef7` с обновлённым контрактом из [`supplier-suborder-workflow.md`](supplier-suborder-workflow.md); старый diff не переносить вслепую.
-3. Если UI-срез совместим, создать отдельную ветку от исправленного PR #29 HEAD и отдельный зависимый PR в `feat/horeca-unified-delivery-2026-11-24`. Inbox показывает только собственные supplier suborders, текущие условия/версии и историю решений; accept/reject/propose используют `expectedVersion` и idempotency key, stale-version conflict восстанавливается безопасно.
-4. Inbox UI остаётся frontend-only: без новых backend state transitions/DB, moderator role, реальных уведомлений, закупок, резервирования, оплаты, доставки или production side effects. Проверить tenant/role, повторные клики, loading/error/empty, клавиатуру, component/E2E; отправить обычным push и дождаться CI. Ни один из PR не сливать и не деплоить.
+- **Цель и границы:** выбрать supplier/platform/carrier/mixed fulfillment, зоны, тарифы, минимумы, сроки, доплаты, объединение и условия категорий.
+- **Предусловия:** пилотный город/категории, LEGAL-01, подтверждённые процессы поставщика/перевозчика.
+- **Acceptance / DoD:** до подтверждённой покупки участники видят ответственного, сумму/метод расчёта и покрытие; неизвестная зона/стоимость блокирует обещание; ручной process допустим для пилота, если это явно заявлено.
+- **Тесты и артефакты:** approved delivery matrix, zone/fee edge-case tests, sandbox/manual rehearsal и escalation runbook.
 
-Другие этапы Product Ready продолжаются отдельными решениями. Supplier moderation остаётся заблокированной отсутствием доверенной platform-moderator роли; финансовые, юридические, операционные и production-гейты не закрываются этим follow-up.
+#### FUL-02 — исполнение, tracking и исключения
 
-## Сквозные инженерные требования
+**Статус: NOT STARTED.**
 
-Эти требования сопровождают каждый этап и должны сохранять принципы из [`AGENTS.md`](../AGENTS.md), [`security.md`](security.md) и [`tenant-foundation.md`](tenant-foundation.md):
+- **Цель и границы:** моделировать pickup, handoff, in-transit, delivered, delay, partial delivery, failed delivery и категории с температурой/сроком годности только если они выбраны.
+- **Предусловия:** FUL-01, ORDER-01, RECEIVE-01.
+- **Acceptance / DoD:** отдельные supplier branches, каждый переход доказуем и аудируем; delivery не равна payment или buyer acceptance; расхождение маршрутизируется в поддержку.
+- **Тесты и артефакты:** status transition tests, idempotent event replay, partial delivery/temperature evidence synthetic tests, operational rehearsal.
 
-- Доверенная серверная проверка аутентификации, членства, роли, tenant и конкретного объекта; UI не является границей безопасности.
-- Deny-by-default grants и RLS; негативные тесты для чужой организации, поставщика, роли и подделанных идентификаторов.
-- Деньги в целых minor units и явной валюте; упаковки, единицы, MOQ, шаг заказа и доставка — отдельные поля.
-- Свежесть цены и доступности проверяется на сервере; snapshots неизменяемы; stale version требует осознанного повторного подтверждения.
-- Все side-effecting операции идемпотентны, concurrency-sensitive writes проверяют версию; операции с несколькими сущностями атомарны.
-- Аудит append-only, секреты/PII/SQL-детали не выводятся пользователю; события корректируются компенсирующим действием.
-- Импорт ограничен по размеру и строкам, валидируется на сервере и не исполняет содержимое файла.
-- Каждое изменение проходит `npm run verify`, `npm run format`, локальные Supabase/pgTAP-тесты (где применимо) и Playwright E2E, включая мобильный поток и доступность.
-- Уровень доказательств маркируется: **local**, **staging/sandbox** или **production**. Успех локальных тестов не доказывает работу внешнего сервиса, спрос или юридическую пригодность.
+### Этап 8 — Trusted operations, поддержка и уведомления
 
-## Рекомендуемый порядок ближайшей разработки
+**Статус этапа: BLOCKED** — нет trusted moderator authority, approved comms policy и operating model.
 
-1. ✅ Сверка project guidance выполнена (PR #25); mobile buyer-flow smoke интегрирован (PR #24); основной buyer/account поток A завершён в `bf3b0d1` (PR #26).
-2. Закрыть follow-up PR #29, получить required CI и затем выполнить read-only контрактный review старой inbox UI-ветки.
-3. После review и только при совместимости — разработать отдельный frontend-only dependent PR для supplier inbox, проверить его tenant/role boundaries и CI; оставить оба PR открытыми до отдельного решения о merge.
-4. Отдельно продолжать supplier onboarding/catalog, account/org deletion и retention, moderation authority и локализацию, не дублируя уже сделанные edit/delete locations и supplier display-name.
-5. Утвердить бизнес-спецификации наличия/резерва, отмены, приёмки, supplier response и ответственности; технический workflow сам по себе не разрешает реальное исполнение.
-6. Только после бизнес- и юридических решений проектировать реальные уведомления, оплату, документы и доставку; staging/production readiness и закрытый пилот — только после отдельного разрешения.
+#### OPS-SUPPORT-01 — operator/support tooling и ручные корректировки
 
-## Связанные документы и их назначение
+**Статус: NOT STARTED.**
 
-- [`task-1-buyer-account-ux.md`](task-1-buyer-account-ux.md) — остаточные buyer/account задачи после завершённого потока A.
-- [`task-2-supplier-onboarding-catalog-moderation.md`](task-2-supplier-onboarding-catalog-moderation.md) — задание по supplier onboarding, каталогу и moderation.
-- [`task-3-supplier-suborder-workflow.md`](task-3-supplier-suborder-workflow.md) — задание Пете по backend lifecycle supplier suborders.
-- [`product-scope.md`](product-scope.md) — текущий объём, роли, модель данных и открытые бизнес-решения.
-- [`tenant-foundation.md`](tenant-foundation.md) — фактический scope Supabase workspace, RLS и текущая граница сохранения request.
-- [`product-ready-supplier-catalog-import.md`](product-ready-supplier-catalog-import.md) — отдельная спецификация серверного импорта каталога.
-- [`hardening-plan.md`](hardening-plan.md) — исторические требования/работы локального P0 hardening; не актуальный этапный roadmap.
-- [`deploy-readiness.md`](deploy-readiness.md) — deploy snapshot; часть статусов относится к старой ветке и commit, а не к текущему состоянию.
-- [`security.md`](security.md) — threat model, локальные гарантии и остающиеся hosted-риски.
-- [`adr.md`](adr.md) — принятые архитектурные решения и открытые предложения.
+- **Цель и границы:** дать support ограниченный просмотр и эскалации, а разрешённые корректировки проводить только как компенсирующее событие с причиной.
+- **Предусловия:** MOD-01, SEC-PRIVACY-01 и dispute procedures утверждены.
+- **Acceptance / DoD:** tenant/role isolation, least privilege, break-glass, append-only audit и reviewable reason; support не может редактировать immutable history или видеть лишние PII.
+- **Тесты и артефакты:** operator role pgTAP, audit/PII leak tests, support playbook и escalation SLA.
+
+#### OPS-NOTIFY-01 — уведомления поставщику/покупателю
+
+**Статус: BLOCKED.**
+
+- **Цель и границы:** специфицировать и только после approval реализовать уведомления об invitation, supplier response, terms change, delay и issue. Сейчас email/SMS/push/WhatsApp/Telegram integrations отсутствуют.
+- **Предусловия:** legal/privacy basis, channels, recipient consent/expectations, templates, address verification, retry/retention rules и отдельное разрешение для реальной отправки.
+- **Acceptance / DoD:** правильный адресат в правильном tenant; dedupe/idempotency/outbox; retry/backoff и dead-letter visibility; шаблоны не раскрывают чужие данные; mute/unsubscribe и delivery logs описаны.
+- **Тесты и артефакты:** local fake provider contract tests, abuse/recipient isolation, retry/replay tests; real delivery только после отдельного owner approval.
+
+### Этап 9 — Сквозные gates: security, privacy, localization, accessibility и reliability
+
+**Статус этапа: IN PROGRESS** — local tenant isolation и automated mobile/accessibility gates уже есть; hosted, manual и operational evidence отсутствуют.
+
+#### SEC-BASE-01 — local tenant isolation и безопасные workflow boundaries
+
+**Статус: DONE для проверенной local/ephemeral поверхности.**
+
+- **Цель и границы:** сохранять RLS/grants/object checks и private workflow tables; demo persona не является Auth.
+- **Acceptance / DoD:** чужие buyer/supplier IDs, роли и tenant не читают/меняют данные; grants deny-by-default; UI не выступает единственной защитой; ошибки безопасны.
+- **Тесты и артефакты:** локальный pgTAP/PostgREST, concurrency, role-negative tests; PR #29 merge checks green. Это не доказывает hosted security.
+
+#### SEC-PRIVACY-01 — data inventory, retention, deletion и logging
+
+**Статус: BLOCKED.**
+
+- **Цель и границы:** документировать личные, коммерческие, location, audit и financial fields; retention/deletion/export; redaction и incident handling.
+- **Предусловия:** LEGAL-01 и ACC-DELETE-01.
+- **Acceptance / DoD:** data-flow inventory с владельцем/основанием/сроком; минимизация и redaction; secrets/PII/SQL не попадают в user-facing errors/logs; data subject workflow определён и проверен.
+- **Тесты и артефакты:** privacy review, synthetic log-leak tests, retention/deletion pgTAP/E2E, incident and breach runbook.
+
+#### LOC-01 — языки, локаль и валюта
+
+**Статус: BLOCKED.**
+
+- **Цель и границы:** выбрать языки интерфейса и терминологию пилота; зафиксировать currency per offer/order, locale formatting, timezone; не делать FX без бизнес-решения.
+- **Предусловия:** PILOT-01, supplier currency policy и legal/accounting review.
+- **Acceptance / DoD:** ru/kk (если выбраны) полностью покрыты, без `kk` alias/непереведённых account strings; supplier currency видна и сохраняется в immutable terms; rounding/format consistent; invalid/unavailable currency блокируется.
+- **Тесты и артефакты:** locale snapshot tests, plural/date/timezone/currency tests, native-speaker terminology review и language QA checklist.
+
+#### A11Y-AUTO-01 — автоматизированный mobile/accessibility gate
+
+**Статус: DONE для имеющегося автоматического покрытия.**
+
+- **Цель и границы:** сохранить Chromium desktop/mobile E2E и automated axe WCAG 2.1 A/AA gate; не называть его полным accessibility sign-off.
+- **Acceptance / DoD:** UI journeys в изменённых ветках проходят mobile viewport и automated accessibility checks.
+- **Тесты и артефакты:** Playwright E2E green на PR #29 и PR #30 source/merge runs; exact CI reports linked by PR.
+
+#### A11Y-MANUAL-01 — ручная клавиатура, screen reader и zoom
+
+**Статус: NOT STARTED.**
+
+- **Цель и границы:** проверить всех критических buyer/supplier/ops workflows с keyboard-only, screen reader, focus order, zoom/reflow и error announcement.
+- **Предусловия:** стабильный candidate build и выбор тестового устройства/браузера.
+- **Acceptance / DoD:** нет блокирующих keyboard traps, контекст/labels/statuses читаемы, zoom не скрывает primary actions; найденные дефекты имеют issue/PR; manual sign-off приложен.
+- **Тесты и артефакты:** ручной checklist, browser/device/version, pass/fail и screen recordings/screenshots только с synthetic data.
+
+#### REL-OBS-01 — monitoring, health, errors и incident response
+
+**Статус: NOT STARTED.**
+
+- **Цель и границы:** определить health checks, error/latency/conflict metrics, correlation IDs, redaction, alerts, owner/on-call и response path для разрешённой непроизводственной среды.
+- **Предусловия:** разрешённая target architecture и SEC-PRIVACY-01.
+- **Acceptance / DoD:** alert test доставляется владельцу тестового канала; dashboards различают auth/data/provider failures; PII/secrets не логируются; runbook описывает triage, mitigation и escalation.
+- **Тесты и артефакты:** fault-injection in nonprod, alert routing test, dashboard screenshots и incident runbook.
+
+#### REL-BACKUP-01 — backups, restore и recovery runbook
+
+**Статус: NOT STARTED.**
+
+- **Цель и границы:** определить backup retention/access, RPO/RTO и безопасный восстановительный процесс; ничего не подключать к live DB.
+- **Предусловия:** architecture, data retention policy и разрешённая disposable/nonprod environment.
+- **Acceptance / DoD:** успешный restore drill, проверка целостности migrations/tenants, секретов и access controls; время и потери укладываются в утверждённые RPO/RTO; procedure пригодна для оператора.
+- **Тесты и артефакты:** nonprod backup/restore evidence, checksum/integrity checks, runbook и owner approval.
+
+#### REL-ABUSE-01 — abuse controls и ограничения
+
+**Статус: NOT STARTED.**
+
+- **Цель и границы:** проверить signup/login/recovery, каталожный import и request abuse, rate limits, file bounds и повторные попытки.
+- **Предусловия:** выбранная hosted/nonprod архитектура, security review и privacy limits.
+- **Acceptance / DoD:** ограничения наблюдаемы и не блокируют нормальные сценарии; brute-force/replay/quota tests; реакция на flood и suspicious supplier account документирована.
+- **Тесты и артефакты:** nonprod load/abuse tests, safe rate-limit config, alert and remediation runbook.
+
+### Этап 10 — Product Ready в изолированной непроизводственной среде
+
+**Статус этапа: BLOCKED** — все upstream бизнес-решения и permissions, reliability и integration CI должны быть закрыты.
+
+#### STAGE-01 — отдельная dev/staging architecture и secrets
+
+**Статус: BLOCKED до явного разрешения на создание/подключение среды.**
+
+- **Цель и границы:** спроектировать отдельные local/dev/staging/prod projects, домены, access, secrets rotation и ownership; prod не подключать.
+- **Предусловия:** согласованные архитектура, vendor, privacy/legal и owner approval на конкретный nonprod scope.
+- **Acceptance / DoD:** environment separation проверена; service-role keys только на серверной стороне; least privilege, separate data, backups, deployment identity и rollback определены; никакого shared live key.
+- **Тесты и артефакты:** architecture decision, secret/access review, nonprod smoke, config leak tests.
+
+#### STAGE-02 — migration rehearsal, rollback и nonprod release
+
+**Статус: NOT STARTED.**
+
+- **Цель и границы:** проверить clean install, upgrade, rollback/forward fix, RLS/grants/RPC, smoke, restore и health в отдельном nonprod.
+- **Предусловия:** STAGE-01, full green integration CI, все migrations reviewed.
+- **Acceptance / DoD:** повторяемый release checklist; rollback/recovery подтверждены; build artifact привязан к commit; staging credentials/dataset не попадают в demo/client; no prod writes.
+- **Тесты и артефакты:** disposable environment migration/pgTAP, smoke/E2E, restore proof, deployment/rollback runbook.
+
+### Этап 11 — Закрытый пилот
+
+**Статус этапа: BLOCKED.** Реальный пилот нельзя выводить из готовности кода или результата локальных тестов.
+
+#### PILOT-01 — пилотный сегмент, метрики и stop criteria
+
+**Статус: BLOCKED до решений владельца.**
+
+- **Цель и границы:** выбрать город, buyer type, supplier categories, ограниченный cohort, пилотный объём и способ поддержки.
+- **Предусловия:** owner выбирает market/segment и подтверждает, кто может участвовать; legal/accounting review.
+- **Acceptance / DoD:** для каждой метрики определены знаменатель, окно, источник, минимальный/целевой уровень, stop threshold и ответственный. Не выдумывать target без baseline.
+- **Тесты и артефакты:** signed pilot charter, synthetic dashboard spec, escalation/rollback/stop checklist.
+
+#### PILOT-02 — Product Ready / GO gate
+
+**Статус: BLOCKED.**
+
+- **Цель и границы:** собрать единый evidence pack перед возможностью закрытого пилота: business/legal, supplier acceptance, privacy/security, support, finance, delivery, reliability, accessibility и CI.
+- **Предусловия:** все применимые task IDs DONE; production/live systems остаются закрытыми.
+- **Acceptance / DoD:** каждый gate имеет owner, evidence link, review date и explicit GO/NO-GO; CI на конкретном release candidate зелёный; rollback/restore и support rehearsal подтверждены; owner отдельно разрешил конкретный pilot cohort, дату, scope и live operations.
+- **Тесты и артефакты:** evidence pack, runbooks, test reports, legal/accounting sign-offs и signed owner approval.
+
+#### PILOT-EXEC-01 — фактическое проведение пилота
+
+**Статус: NOT STARTED; отдельное разрешение обязательно.**
+
+- **Цель и границы:** ограниченный, контролируемый пилот с реальными участниками только в утверждённом scope. Реальные заказы/платежи/уведомления/данные не входят в текущую задачу.
+- **Предусловия:** PILOT-02 GO и точное owner approval на операции, участников и лимиты.
+- **Acceptance / DoD:** все stop criteria и incident escalation соблюдаются; данные собираются минимально; каждый заказ/branch прослеживаем; пилот закрыт или остановлен с отчетом по заранее выбранным метрикам.
+- **Тесты и артефакты:** операционный checklist, cohort consent, monitoring, incident log и post-pilot report.
+
+### Этап 12 — Решение о публичном запуске
+
+**Статус этапа: NOT STARTED.** Публичный launch не является автоматическим продолжением пилота.
+
+#### LAUNCH-01 — отдельное Go/No-Go публичного запуска
+
+**Статус: NOT STARTED.**
+
+- **Цель и границы:** владелец принимает решение по конкретному release commit, домену, дате, стране, категориям и уровню поддержки.
+- **Предусловия:** пилотные критерии выполнены; legal/accounting/security/privacy/payment/delivery gates закрыты; unit economics и support capacity подтверждены.
+- **Acceptance / DoD:** signed GO с approved build SHA, domain, launch limits, rollout/rollback, incident owner и budget; NO-GO причины зафиксированы и возвращают соответствующие задачи в BLOCKED/IN PROGRESS.
+- **Тесты и артефакты:** final security review, restore/rollback drill, operational readiness, accessibility and localization sign-off, owner approval. До отдельного разрешения не публиковать и не деплоить.
+
+## Сквозные Definition of Done
+
+Каждое code изменение сохраняет применимые правила из [`AGENTS.md`](../AGENTS.md), [`security.md`](security.md), [`product-scope.md`](product-scope.md), [`tenant-foundation.md`](tenant-foundation.md) и [`supplier-suborder-workflow.md`](supplier-suborder-workflow.md):
+
+- Сервер доверяет authenticated identity + membership + role + object ownership, а не клиентским ID или скрытым controls; grants/RLS проверяются парно.
+- Buyer parent request и independent supplier suborders не смешивают статусы; принятие условий, резерв, confirmed order, fulfillment, receipt и payment — разные переходы.
+- Цена/наличие имеют отдельные наблюдения и timestamps; stale/unknown блокирует либо требует явного подтверждения; snapshots immutable.
+- Деньги хранятся в integer minor units, валюта указана явно; unit/pack/MOQ/step/delivery fee — отдельные размерности; FX запрещён без одобренной модели.
+- Side-effecting writes атомарны, идемпотентны и имеют concurrency control; audit append-only; безопасные typed errors без PII/secrets/SQL details.
+- Импорт ограничен по размеру/строкам, повторно валидируется сервером, не исполняет содержимое и не создаёт дублей.
+- Любое новое внешнее сообщение, платёж, заказ, резерв, доставка, production connection или deployment имеет отдельный permission gate.
+- Все результаты маркируются `local`, `ephemeral CI`, `approved nonprod/staging` или `production`; локальные synthetic tests не доказывают коммерческую, юридическую или hosted готовность.
+- Для code PR требуются формат, lint, typecheck, unit/component coverage, build, применимые local/ephemeral Supabase tests и Playwright desktop/mobile/accessibility; меняющийся список required checks сверять в GitHub для свежего base/head.
+
+## Что не считать решением
+
+Не выводить из кода или статуса `platform-as-seller`: юридического продавца, комиссию, тарифы, налоги, счета, валюту/обмен, settlement, stock guarantee, сроки ответа, доставку, data retention, допустимость уведомлений или готовность к рынку. Каждое из этих решений должно быть явно подтверждено владельцем и, где применимо, профильным специалистом.
