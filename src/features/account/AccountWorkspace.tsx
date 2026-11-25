@@ -3,6 +3,7 @@ import type { User } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/data/supabase/client";
 import { evaluateFreshness } from "@/domain/freshness";
 import { BuyerProcurementListsPanel } from "@/features/account/BuyerProcurementListsPanel";
+import { BuyerTermsReviewPanel } from "@/features/account/BuyerTermsReviewPanel";
 import { membershipRoleLabel } from "@/features/account/roleLabels";
 import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
 import { OrganizationAccess } from "@/features/account/OrganizationAccess";
@@ -722,6 +723,15 @@ export function AccountWorkspaceReady({
               locations={activeLocations}
               offers={snapshot.catalog}
               supplierProfiles={snapshot.supplierProfiles}
+            />
+          ) : null}
+
+          {activeOrganization?.organization_type === "buyer" ? (
+            <BuyerTermsReviewPanel
+              client={client}
+              organizationId={activeOrganization.id}
+              organizationType="buyer"
+              role={activeOrganization.role}
             />
           ) : null}
 

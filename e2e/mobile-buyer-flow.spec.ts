@@ -243,6 +243,13 @@ async function installLocalSupabaseMocks(page: Page): Promise<E2EMockState> {
       return;
     }
 
+    // Buyer terms review is a read-only RPC; it must not be recorded as a
+    // side-effecting mutation in this hermetic mock.
+    if (method === "POST" && table === "list_buyer_supplier_suborder_workflows") {
+      await fulfillJson(route, []);
+      return;
+    }
+
     const body = requestBody(route);
     const rowId = url.searchParams.get("id")?.replace(/^eq\./, "");
     if (method === "PATCH" && table === "buyer_draft_carts") {
