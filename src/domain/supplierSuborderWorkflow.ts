@@ -132,6 +132,25 @@ export function isSupplierSuborderWorkflowStatus(
   );
 }
 
+/**
+ * Local, reversible default for response deadlines: the timestamp is shown to
+ * both sides but never changes the workflow. Silence and elapsed time are not
+ * consent, rejection, reservation or an order. A real SLA policy is an owner
+ * decision and is intentionally not inferred here.
+ */
+export const SUPPLIER_RESPONSE_DEADLINE_NOTICE =
+  "Срок ответа указан для сведения: просрочка не меняет условия, не означает согласия и не создаёт заказ или резерв.";
+
+export function hasResponseDeadlineElapsed(
+  deadlineAt: string | null,
+  nowIso: string,
+): boolean {
+  if (deadlineAt === null) return false;
+  const deadline = Date.parse(deadlineAt);
+  const now = Date.parse(nowIso);
+  return Number.isFinite(deadline) && Number.isFinite(now) && deadline < now;
+}
+
 /** State-machine guard for consumers; the database remains authoritative. */
 export function canApplySupplierSuborderWorkflowAction(
   status: SupplierSuborderWorkflowStatus,

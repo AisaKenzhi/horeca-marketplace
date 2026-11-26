@@ -6,9 +6,11 @@ import {
   Section,
   StatusPill,
 } from "@/components/primitives";
-import type {
-  SupplierSuborderWorkflow,
-  SupplierSuborderWorkflowReceipt,
+import {
+  hasResponseDeadlineElapsed,
+  SUPPLIER_RESPONSE_DEADLINE_NOTICE,
+  type SupplierSuborderWorkflow,
+  type SupplierSuborderWorkflowReceipt,
 } from "@/domain/supplierSuborderWorkflow";
 import type { MembershipRole, OrganizationType } from "@/data/supabase/database.types";
 import type { WorkspaceClient } from "@/data/supabase/workspace";
@@ -394,7 +396,16 @@ export function SupplierSuborderInboxPanel({
                 <p className="small">
                   <strong>Срок ответа:</strong>{" "}
                   {new Date(selected.responseDeadlineAt).toLocaleString("ru-RU")}
+                  {hasResponseDeadlineElapsed(
+                    selected.responseDeadlineAt,
+                    new Date().toISOString(),
+                  )
+                    ? " (срок прошел)"
+                    : ""}
                 </p>
+              ) : null}
+              {selected.responseDeadlineAt ? (
+                <p className="small muted">{SUPPLIER_RESPONSE_DEADLINE_NOTICE}</p>
               ) : null}
               <ul className="supplier-suborder-lines">
                 {selected.lines.map((line) => (

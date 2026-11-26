@@ -18,7 +18,11 @@ import {
   workspaceErrorMessage,
   type WorkspaceClient,
 } from "@/data/supabase/workspace";
-import type { SupplierSuborderWorkflow } from "@/domain/supplierSuborderWorkflow";
+import {
+  hasResponseDeadlineElapsed,
+  SUPPLIER_RESPONSE_DEADLINE_NOTICE,
+  type SupplierSuborderWorkflow,
+} from "@/domain/supplierSuborderWorkflow";
 
 type RequestRow = {
   readonly id: string;
@@ -295,7 +299,16 @@ export function BuyerTermsReviewPanel({
               <p className="small">
                 <strong>Срок ответа:</strong>{" "}
                 {new Date(workflow.responseDeadlineAt).toLocaleString("ru-RU")}
+                {hasResponseDeadlineElapsed(
+                  workflow.responseDeadlineAt,
+                  new Date().toISOString(),
+                )
+                  ? " (срок прошел)"
+                  : ""}
               </p>
+            ) : null}
+            {workflow.responseDeadlineAt ? (
+              <p className="small muted">{SUPPLIER_RESPONSE_DEADLINE_NOTICE}</p>
             ) : null}
             <ul className="supplier-suborder-lines">
               {workflow.lines.map((line) => (
