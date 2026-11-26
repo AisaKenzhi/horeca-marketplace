@@ -587,3 +587,41 @@ test("UAT: a changed offer version is an explicit blocker, not a silent send", a
     cart.getByRole("button", { name: "Создать запрос закупки" }),
   ).toBeDisabled();
 });
+
+test("UAT keyboard/reflow: location select and submit are reachable without a mouse", async ({
+  page,
+}) => {
+  test.skip(
+    !usesLocalAuthMock,
+    "Runs only against the local, mocked Supabase build used by e2e:ci.",
+  );
+  await installSupabaseMocks(page);
+  page.on("dialog", (dialog) => void dialog.accept());
+  await page.goto("/account");
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel("Пароль").fill("test-password-123");
+  await page.getByRole("button", { name: "Войти" }).last().click();
+
+  const cart = page.locator(".draft-cart-card").filter({ hasText: "Select location" });
+  const select = cart.getByLabel("Точка покупателя для этой корзины");
+  await select.focus();
+  await expect(select).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(cart.locator(".draft-cart-review")).toContainText(
+    "Проверки по доступным данным пройдены",
+  );
+
+  const submit = cart.getByRole("button", { name: "Создать запрос закупки" });
+  await expect(submit).toBeEnabled();
+  await submit.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "Запросы закупки" })).toBeVisible();
+
+  await page.setViewportSize({ width: 320, height: 700 });
+  const overflow = await page.evaluate(() => ({
+    documentWidth: document.documentElement.scrollWidth,
+    viewportWidth: document.documentElement.clientWidth,
+  }));
+  expect(overflow.documentWidth).toBeLessThanOrEqual(overflow.viewportWidth);
+});

@@ -124,12 +124,14 @@ function AccountAuth({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const submitRef = useRef<HTMLButtonElement | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
     setMessage("");
+    let refocusOnError = false;
     try {
       if (mode === "recover") {
         const { error: authError } = await client.auth.resetPasswordForEmail(
@@ -160,8 +162,12 @@ function AccountAuth({
       }
     } catch (caught) {
       setError(workspaceErrorMessage(caught));
+      refocusOnError = true;
     } finally {
       setBusy(false);
+      if (refocusOnError) {
+        requestAnimationFrame(() => submitRef.current?.focus());
+      }
     }
   }
 
@@ -235,7 +241,12 @@ function AccountAuth({
           ) : null}
           {error ? <Notice tone="danger">{error}</Notice> : null}
           {message ? <Notice>{message}</Notice> : null}
-          <button className="btn btn-primary" type="submit" disabled={busy}>
+          <button
+            className="btn btn-primary"
+            type="submit"
+            disabled={busy}
+            ref={submitRef}
+          >
             {busy
               ? "Подождите…"
               : mode === "sign_up"
