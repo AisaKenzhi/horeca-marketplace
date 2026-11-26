@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AVAILABILITY_IS_OBSERVATION_NOTICE } from "./freshness";
 import {
   DEFAULT_FRESHNESS_CONFIG,
   describeAvailability,
@@ -65,5 +66,12 @@ describe("freshness", () => {
     expect(evaluateFreshness(tv(1, 2), NOW, DEFAULT_FRESHNESS_CONFIG).state).toBe(
       "fresh",
     );
+  });
+});
+
+describe("availability model (local observation-only default)", () => {
+  it("states that supplier availability is not a reservation or stock balance", () => {
+    expect(AVAILABILITY_IS_OBSERVATION_NOTICE).toContain("не резерв");
+    expect(AVAILABILITY_IS_OBSERVATION_NOTICE).toContain("без количественного остатка");
   });
 });

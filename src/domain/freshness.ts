@@ -9,6 +9,15 @@
 
 export type FreshnessState = "fresh" | "stale" | "unknown";
 
+/**
+ * Reversible local default for STOCK-01: supplier-reported availability is an
+ * observation without a numeric stock balance. It is not a reservation, a
+ * guaranteed purchasable quantity, or a physical warehouse balance. A real
+ * stock/reservation model is an owner decision and is not inferred here.
+ */
+export const AVAILABILITY_IS_OBSERVATION_NOTICE =
+  "Наличие сообщено поставщиком без количественного остатка: это не резерв и не гарантия покупки.";
+
 export interface TimestampedValue<T> {
   /** The observed value, or null when we genuinely do not know it. */
   readonly value: T | null;

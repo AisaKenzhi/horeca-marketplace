@@ -8,7 +8,10 @@ import {
   Section,
 } from "@/components/primitives";
 import { availabilityLabel, describePackaging, relativeAge } from "@/components/format";
-import { evaluateFreshness } from "@/domain/freshness";
+import {
+  AVAILABILITY_IS_OBSERVATION_NOTICE,
+  evaluateFreshness,
+} from "@/domain/freshness";
 import { unitPrice } from "@/domain/packaging";
 import { formatMoney } from "@/domain/money";
 import type { SupplierOffer } from "@/domain/entities";
@@ -109,6 +112,7 @@ function CatalogRow({ offer, supplierName, nowIso, onAdd }: CatalogRowProps): Re
         <p className="muted small">
           Возраст снимка: {relativeAge(offer.pricePerSellUnit.observedAt, nowIso)}
         </p>
+        <p className="muted small">{AVAILABILITY_IS_OBSERVATION_NOTICE}</p>
       </div>
 
       <div className="catalog-row-actions">
