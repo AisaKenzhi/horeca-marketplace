@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
 import { getSupabaseClient } from "@/data/supabase/client";
-import { evaluateFreshness } from "@/domain/freshness";
+import {
+  AVAILABILITY_IS_OBSERVATION_NOTICE,
+  evaluateFreshness,
+} from "@/domain/freshness";
 import { BuyerProcurementListsPanel } from "@/features/account/BuyerProcurementListsPanel";
 import { BuyerTermsReviewPanel } from "@/features/account/BuyerTermsReviewPanel";
 import { membershipRoleLabel } from "@/features/account/roleLabels";
@@ -993,6 +996,7 @@ export function AccountWorkspaceReady({
                       />
                       .
                     </p>
+                    <p className="small muted">{AVAILABILITY_IS_OBSERVATION_NOTICE}</p>
                   </div>
                 </article>
               </li>
