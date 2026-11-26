@@ -184,7 +184,11 @@ interface E2ESupabaseMockState {
   idempotencyKeysUsed: string[];
 }
 
-async function installSupabaseMocks(page: Page): Promise<E2ESupabaseMockState> {
+async function installSupabaseMocks(
+  page: Page,
+  options: { readonly offers?: typeof offers } = {},
+): Promise<E2ESupabaseMockState> {
+  const activeOffers = options.offers ?? offers;
   carts.splice(0, carts.length, ...cartSeeds.map((cart) => ({ ...cart })));
   cartItems.splice(0, cartItems.length, ...cartItemSeeds.map((item) => ({ ...item })));
   procurementRequests.splice(0, procurementRequests.length);
@@ -230,7 +234,7 @@ async function installSupabaseMocks(page: Page): Promise<E2ESupabaseMockState> {
         ],
         buyer_locations: locations,
         supplier_profiles: suppliers,
-        catalog_offers: offers,
+        catalog_offers: activeOffers,
         buyer_procurement_lists: [],
         buyer_procurement_list_items: [],
         buyer_draft_carts: carts,
@@ -310,7 +314,9 @@ async function installSupabaseMocks(page: Page): Promise<E2ESupabaseMockState> {
         submitted_at: submittedAt,
       });
       for (const item of cartItems.filter((candidate) => candidate.cart_id === cart.id)) {
-        const offer = offers.find((candidate) => candidate.id === item.catalog_offer_id);
+        const offer = activeOffers.find(
+          (candidate) => candidate.id === item.catalog_offer_id,
+        );
         if (!offer) continue;
         procurementRequestLines.push({
           id: `request-line-${item.id}`,
@@ -528,4 +534,56 @@ test("replaying after an ambiguous response returns the same persisted request",
   expect(
     carts.find((candidate) => candidate.id === LOCATION_CART_ID)?.submitted_at,
   ).toBeTruthy();
+});
+
+test("UAT: an empty catalog is stated honestly and never looks sendable", async ({
+  page,
+}) => {
+  test.skip(
+    !usesLocalAuthMock,
+    "UAT runs only against the local, mocked Supabase build used by e2e:ci.",
+  );
+  await installSupabaseMocks(page, { offers: [] });
+  await page.goto("/account");
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel("Пароль").fill("test-password-123");
+  await page.getByRole("button", { name: "Войти" }).last().click();
+
+  await expect(
+    page.getByText("Пока нет опубликованных предложений одобренных поставщиков."),
+  ).toBeVisible();
+  const cart = page.locator(".draft-cart-card").filter({ hasText: "Select location" });
+  await expect(cart).toContainText("Есть блокирующие пункты");
+  await expect(cart.locator(".draft-cart-review")).toContainText("заблокировано: 1");
+  await expect(
+    cart.getByRole("button", { name: "Создать запрос закупки" }),
+  ).toBeDisabled();
+});
+
+test("UAT: a changed offer version is an explicit blocker, not a silent send", async ({
+  page,
+}) => {
+  test.skip(
+    !usesLocalAuthMock,
+    "UAT runs only against the local, mocked Supabase build used by e2e:ci.",
+  );
+  const changedOffers = offers.map((offer) =>
+    offer.id === OFFER_ID ? { ...offer, version: 2 } : offer,
+  );
+  await installSupabaseMocks(page, { offers: changedOffers });
+  await page.goto("/account");
+  await page.getByLabel("Email").fill(user.email);
+  await page.getByLabel("Пароль").fill("test-password-123");
+  await page.getByRole("button", { name: "Войти" }).last().click();
+
+  const cart = page.locator(".draft-cart-card").filter({ hasText: "Select location" });
+  await expect(cart).toContainText(
+    "Условия предложения изменились после создания корзины",
+  );
+  await expect(cart.locator(".draft-cart-review")).toContainText(
+    "цену и условия нужно проверить заново",
+  );
+  await expect(
+    cart.getByRole("button", { name: "Создать запрос закупки" }),
+  ).toBeDisabled();
 });
