@@ -262,3 +262,40 @@ test("signed-in buyer signs out through Supabase Auth", async ({ page }) => {
   ).toBeVisible();
   expect(loggedOut).toBe(true);
 });
+
+test("keyboard-only sign-in keeps focus order and announces a safe error", async ({
+  page,
+}) => {
+  test.skip(!usesLocalAuthMock, "Runs only with the local mocked Supabase build.");
+  await mockAuthEndpoint(page, (pathname) => {
+    if (pathname.endsWith("/auth/v1/token")) {
+      return {
+        status: 400,
+        body: { code: "invalid_credentials", message: "Invalid login credentials" },
+      };
+    }
+    return {
+      status: 401,
+      body: { code: "missing_authorization", message: "Missing authorization header" },
+    };
+  });
+
+  await page.goto("/account");
+  const email = page.getByLabel("Email");
+  await email.focus();
+  await expect(email).toBeFocused();
+  await page.keyboard.type("wrong.account@example.test");
+  await page.keyboard.press("Tab");
+  const password = page.getByLabel("Пароль");
+  await expect(password).toBeFocused();
+  await page.keyboard.type("wrong-password-123");
+  await page.keyboard.press("Tab");
+  const submit = page.getByRole("button", { name: "Войти" }).last();
+  await expect(submit).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("Не удалось войти: проверьте email и пароль.");
+  expect(await alert.getAttribute("role")).toBe("alert");
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BUTTON");
+});
