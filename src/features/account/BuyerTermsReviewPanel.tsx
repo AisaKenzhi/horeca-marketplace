@@ -20,6 +20,7 @@ import {
 } from "@/data/supabase/workspace";
 import {
   hasResponseDeadlineElapsed,
+  ORDER_BOUNDARY_NOTICE,
   SUPPLIER_RESPONSE_DEADLINE_NOTICE,
   type SupplierSuborderWorkflow,
 } from "@/domain/supplierSuborderWorkflow";
@@ -211,6 +212,7 @@ export function BuyerTermsReviewPanel({
         поставщика; молчание не означает согласия. Принятие условий не создаёт заказ,
         резерв, оплату или доставку.
       </p>
+      <p className="small muted">{ORDER_BOUNDARY_NOTICE}</p>
       {!canDecide ? <Notice>Ваша роль доступна только для чтения.</Notice> : null}
       {loadError ? <ErrorState message={loadError} /> : null}
       {loading ? (
