@@ -297,5 +297,7 @@ test("keyboard-only sign-in keeps focus order and announces a safe error", async
   const alert = page.getByRole("alert");
   await expect(alert).toContainText("Не удалось войти: проверьте email и пароль.");
   expect(await alert.getAttribute("role")).toBe("alert");
-  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BUTTON");
+  await expect
+    .poll(async () => page.evaluate(() => document.activeElement?.tagName ?? ""))
+    .toBe("BUTTON");
 });
