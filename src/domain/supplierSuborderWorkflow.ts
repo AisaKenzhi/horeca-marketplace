@@ -16,6 +16,14 @@ export const SUPPLIER_SUBORDER_WORKFLOW_STATUSES = [
 export type SupplierSuborderWorkflowStatus =
   (typeof SUPPLIER_SUBORDER_WORKFLOW_STATUSES)[number];
 
+/**
+ * Local reversible boundary: supplier agreement is a workflow state, not a
+ * purchase. No status in this workflow means confirmed/paid/reserved/delivered
+ * order; those states need a separate approved commercial model.
+ */
+export const ORDER_BOUNDARY_NOTICE =
+  "Принятие условий поставщиком — только согласование ветки. Подтверждённый заказ, оплата, резерв и доставка здесь не создаются.";
+
 export const SUPPLIER_SUBORDER_WORKFLOW_ACTIONS = [
   "supplier_accept",
   "supplier_reject",

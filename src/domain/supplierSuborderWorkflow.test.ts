@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ORDER_BOUNDARY_NOTICE } from "./supplierSuborderWorkflow";
 import {
   canApplySupplierSuborderWorkflowAction,
   hasResponseDeadlineElapsed,
@@ -82,5 +83,14 @@ describe("response deadline (local informational-only default)", () => {
     );
     expect(canApplySupplierSuborderWorkflowAction(status, "supplier_accept")).toBe(false);
     expect(SUPPLIER_RESPONSE_DEADLINE_NOTICE).toContain("не означает согласия");
+  });
+});
+
+describe("order boundary (local default)", () => {
+  it("never names a confirmed/paid/reserved/delivered order in workflow statuses", () => {
+    for (const status of SUPPLIER_SUBORDER_WORKFLOW_STATUSES) {
+      expect(status).not.toMatch(/order|paid|reserved|delivered|invoice/);
+    }
+    expect(ORDER_BOUNDARY_NOTICE).toContain("только согласование ветки");
   });
 });
