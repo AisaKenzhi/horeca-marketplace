@@ -10,6 +10,7 @@ import { BuyerTermsReviewPanel } from "@/features/account/BuyerTermsReviewPanel"
 import { membershipRoleLabel } from "@/features/account/roleLabels";
 import { CatalogOfferTermsForm } from "@/features/account/CatalogOfferTermsForm";
 import { OrganizationAccess } from "@/features/account/OrganizationAccess";
+import { OperatorModerationPanel } from "@/features/account/OperatorModerationPanel";
 import { SupplierCatalogImportPanel } from "@/features/account/SupplierCatalogImportPanel";
 import { SupplierSuborderInboxPanel } from "@/features/account/SupplierSuborderInboxPanel";
 import {
@@ -1009,15 +1010,18 @@ export function AccountWorkspaceReady({
         )}
       </section>
 
+      <OperatorModerationPanel client={client} />
+
       <section className="card account-section account-boundary-note">
         <h2 className="card-title">Граница этого среза</h2>
         <p>
           Здесь есть Auth, организации, членства, точки покупателя, базовые SKU и
           сохранённые списки закупок. Добавление списка формирует только черновую корзину
           в текущем просмотре; заказ не создаётся и не отправляется. Почтовый провайдер не
-          подключён: приглашения передаются вручную по ссылке. Operator review UI,
-          отправка закупки, доставка, оплаты, escrow и settlement не входят в этот
-          engineering slice.
+          подключён: приглашения передаются вручную по ссылке. Локальная очередь проверки
+          поставщиков доступна только доверенной серверной роли и не является юридической
+          верификацией; отправка закупки, доставка, оплаты, escrow и settlement не входят
+          в этот engineering slice.
         </p>
       </section>
     </main>
