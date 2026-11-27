@@ -10,8 +10,7 @@ select set_config('request.jwt.claim.sub','53000000-0000-4000-8000-000000000002'
 insert into public.organizations(id,name,organization_type,created_by) values
  ('54000000-0000-4000-8000-000000000001','Moderation Supplier A','supplier','53000000-0000-4000-8000-000000000002'),
  ('54000000-0000-4000-8000-000000000002','Moderation Supplier B','supplier','53000000-0000-4000-8000-000000000002');
-insert into public.organization_memberships(organization_id,user_id,role) values
- ('54000000-0000-4000-8000-000000000001','53000000-0000-4000-8000-000000000002','owner');
+-- The organizations trigger already adds the creator as owner membership.
 insert into public.supplier_profiles(organization_id,display_name,verification_status) values
  ('54000000-0000-4000-8000-000000000001','Pending supplier A','pending'),
  ('54000000-0000-4000-8000-000000000002','Pending supplier B','pending');
