@@ -40,7 +40,10 @@ select ok(
 set local role authenticated;
 select set_config('request.jwt.claim.sub','53000000-0000-4000-8000-000000000003',true);
 select is(public.is_platform_moderator(),false,'outsider is not a platform moderator');
-select is((select count(*)::int from public.list_pending_supplier_profiles()),0,'outsider sees no pending profiles');
+select throws_ok(
+  $$select * from public.list_pending_supplier_profiles()$$,
+  '42501',null,'outsider cannot list pending profiles'
+);
 select throws_ok(
   $$select public.decide_supplier_verification('54000000-0000-4000-8000-000000000001','approve','synthetic')$$,
   '42501',null,'outsider cannot approve a supplier');
