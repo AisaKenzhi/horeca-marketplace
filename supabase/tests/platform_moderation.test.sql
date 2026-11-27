@@ -61,10 +61,12 @@ select ok(
   (select public.decide_supplier_verification('54000000-0000-4000-8000-000000000001','approve','Synthetic verification decision'))
     is not null,
   'moderator approve returns an event id');
+reset role;
 select is(
   (select verification_status from public.supplier_profiles where organization_id='54000000-0000-4000-8000-000000000001'),
   'approved','approved profile changes to approved');
 select is((select count(*)::int from private.platform_moderation_events),1,'decision writes one audit event');
+set local role authenticated;
 select throws_ok(
   $$select public.decide_supplier_verification('54000000-0000-4000-8000-000000000001','reject','late decision')$$,
   '55000',null,'already decided profile cannot be decided twice');
@@ -72,16 +74,20 @@ select ok(
   (select public.decide_supplier_verification('54000000-0000-4000-8000-000000000002','reject','Synthetic rejection reason'))
     is not null,
   'moderator reject returns an event id');
+reset role;
 select is(
   (select verification_status from public.supplier_profiles where organization_id='54000000-0000-4000-8000-000000000002'),
   'rejected','rejected profile changes to rejected');
+set local role authenticated;
 select throws_ok(
   $$select public.decide_supplier_verification('54000000-0000-4000-8000-000000000001','unknown','synthetic')$$,
   '23514',null,'invalid decision value is rejected');
 select throws_ok(
   $$select public.decide_supplier_verification('54000000-0000-4000-8000-000000000001','approve','  ')$$,
   '23514',null,'empty reason is rejected');
+reset role;
 select is((select count(*)::int from private.platform_moderation_events),2,'invalid decisions create no audit event');
+set local role authenticated;
 reset role;
 select throws_ok(
   $$delete from private.platform_moderation_events$$,

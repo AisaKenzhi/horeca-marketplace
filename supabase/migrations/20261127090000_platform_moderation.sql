@@ -83,7 +83,10 @@ returns table (
 )
 language plpgsql
 stable
-security invoker
+-- Pending profiles are intentionally not exposed by the normal buyer RLS
+-- policy. Trusted read uses SECURITY DEFINER with pinned search_path and an
+-- explicit moderator check; no client table grants are added.
+security definer
 set search_path = ''
 as $$
 begin
