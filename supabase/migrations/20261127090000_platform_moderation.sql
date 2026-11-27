@@ -110,7 +110,11 @@ create or replace function public.decide_supplier_verification(
 )
 returns uuid
 language plpgsql
-security invoker
+-- SECURITY DEFINER is required: client grants intentionally exclude
+-- verification_status, so a SECURITY INVOKER function cannot write it. All
+-- role/tenant checks are explicit below; search_path is pinned and every
+-- object is schema-qualified. Grants are execute-only.
+security definer
 set search_path = ''
 as $$
 declare
