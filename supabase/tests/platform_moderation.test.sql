@@ -6,6 +6,7 @@ insert into auth.users (id,instance_id,aud,role,email,encrypted_password,email_c
  ('53000000-0000-4000-8000-000000000002','00000000-0000-0000-0000-000000000000','authenticated','authenticated','supplier-owner@example.test','',now()),
  ('53000000-0000-4000-8000-000000000003','00000000-0000-0000-0000-000000000000','authenticated','authenticated','outsider@example.test','',now());
 
+select set_config('request.jwt.claim.sub','53000000-0000-4000-8000-000000000002',true);
 insert into public.organizations(id,name,organization_type,created_by) values
  ('54000000-0000-4000-8000-000000000001','Moderation Supplier A','supplier','53000000-0000-4000-8000-000000000002'),
  ('54000000-0000-4000-8000-000000000002','Moderation Supplier B','supplier','53000000-0000-4000-8000-000000000002');
