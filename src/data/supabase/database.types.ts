@@ -415,6 +415,27 @@ export type Database = {
         };
         Returns: Json;
       };
+      is_platform_moderator: {
+        Args: Record<PropertyKey, never>;
+        Returns: boolean;
+      };
+      list_pending_supplier_profiles: {
+        Args: Record<PropertyKey, never>;
+        Returns: {
+          organization_id: string;
+          display_name: string;
+          verification_status: string;
+          created_at: string;
+        }[];
+      };
+      decide_supplier_verification: {
+        Args: {
+          p_organization_id: string;
+          p_decision: string;
+          p_reason: string;
+        };
+        Returns: string;
+      };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };

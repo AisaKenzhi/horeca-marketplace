@@ -249,6 +249,11 @@ async function installLocalSupabaseMocks(page: Page): Promise<E2EMockState> {
       await fulfillJson(route, []);
       return;
     }
+    // Moderator capability check is read-only; this synthetic buyer is not one.
+    if (method === "POST" && table === "is_platform_moderator") {
+      await fulfillJson(route, false);
+      return;
+    }
 
     const body = requestBody(route);
     const rowId = url.searchParams.get("id")?.replace(/^eq\./, "");
